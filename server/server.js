@@ -6,8 +6,12 @@ const express = require('express');
 const { Pool } = require('pg');
 const outfits = require('./outfits');
 const { cifra, verifica, emettiToken, richiedeAccesso } = require('./auth');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
+// Render (e ogni PaaS) mette un proxy davanti: senza questo express vede
+// sempre lo stesso ip e il limite sui tentativi conterebbe tutti insieme.
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
 // Middleware per leggere il JSON
@@ -87,7 +91,21 @@ function erroreDb(res, errore) {
     res.status(500).json({ errore: errore.message });
 }
 
-app.post("/api/login", async(req, res)=>{
+// Con l'API pubblica il login è l'unica porta aperta senza token: senza un
+// limite si possono provare password all'infinito. Dieci tentativi ogni
+// quarto d'ora sono larghi per una persona che scrive male la password, e
+// stretti per chi le prova a macchina.
+const limiteLogin = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Su Render la richiesta passa da un proxy: senza questo il conteggio
+    // sarebbe su un unico ip e bloccherebbe tutti insieme.
+    message: {errore: "Troppi tentativi di accesso. Riprova fra un quarto d'ora."},
+});
+
+app.post("/api/login", limiteLogin, async(req, res)=>{
     const {username, password}= req.body;
     try{
         const result= await pool.query(

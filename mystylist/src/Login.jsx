@@ -31,7 +31,13 @@ function Login(){
                         <input className="box-username" onChange={(e)=>{setUsername(e.target.value)}}></input>
                         <div className="password-text">Password</div>
                         <input className="box-password" onChange={(e)=>{setPassword(e.target.value)}}></input>
-                        <div className="password-dimenticata-text">Password dimenticata?</div>
+                        {/* Il link "Password dimenticata?" non portava da
+                            nessuna parte e non c'è un flusso di recupero: la
+                            password la rigenera l'amministratore con
+                            crea_utente.js. Meglio dirlo che fingere. */}
+                        <div className="password-dimenticata-text">
+                            Password smarrita? Chiedila all'amministratore.
+                        </div>
                         {errore && <div className="banner-errore">{errore}</div>}
                         <div className="bottone-accedi" onClick={accedi}>Accedi</div>
                     </div>

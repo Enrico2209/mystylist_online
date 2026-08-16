@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { IconHanger2, IconX, IconCheck, IconExternalLink } from '@tabler/icons-react';
-import { posta, prendi, leggiToken, SessioneScaduta } from "./api.js";
+import { IconHanger2, IconX, IconCheck, IconExternalLink, IconLogout } from '@tabler/icons-react';
+import { posta, prendi, leggiToken, leggiUtente, chiudiSessione, SessioneScaduta } from "./api.js";
 import ModaleRifiuto from "./ModaleRifiuto.jsx";
 
 const prezzo = (valore, completo) =>
@@ -24,7 +24,10 @@ function Dashboard(){
     const [dettaglio, setDettaglio]= useState(null);
 
     const token = leggiToken();
+    const utente = leggiUtente();
     const navigate= useNavigate();
+
+    const esci = ()=>{ chiudiSessione(); navigate("/"); };
 
     // Arrivando su /dashboard senza token le chiamate tornerebbero tutte 401
     // e la pagina resterebbe vuota senza spiegare perché: meglio il login.
@@ -154,7 +157,14 @@ function Dashboard(){
                         </div>
                     </div>
                     <div className="header-dashboard-right">
-                        <div className="stylist-text">Stilista: <strong>Francesco Cagliaresco</strong></div>
+                        <div className="stylist-text">
+                            {/* Il nome arriva dal token: scritto qui dentro,
+                                chiunque accedesse vedeva il nome di un altro. */}
+                            Stilista: <strong>{utente || "—"}</strong>
+                            <span className="esci" onClick={esci} title="Esci">
+                                <IconLogout size={13} stroke={2} /> Esci
+                            </span>
+                        </div>
                         <div className="shortcut-text">Shortcut <kbd>A</kbd> Approva <kbd>R</kbd> Rifiuta</div>
                     </div>
 

@@ -4,14 +4,17 @@
 export const API = import.meta.env.VITE_API_URL || "http://localhost:3002";
 
 export const leggiToken = () => localStorage.getItem("token");
+export const leggiUtente = () => localStorage.getItem("username") || "";
 export const salvaSessione = (token, utente) => {
     localStorage.setItem("token", token);
     localStorage.setItem("iduser", utente.id);
+    localStorage.setItem("username", utente.username);
     localStorage.setItem("logged", "true");
 };
 export const chiudiSessione = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("iduser");
+    localStorage.removeItem("username");
     localStorage.setItem("logged", "false");
 };
 

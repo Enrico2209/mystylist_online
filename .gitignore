@@ -12,4 +12,9 @@ dist/
 # I file di lavoro della pipeline non appartengono al repo della UI
 *.parquet
 *.jsonl
-outfits_ui*.json
+
+# ...ma server/dati/outfits_ui.json e mystylist/public/media SÌ: sono la
+# versione web (43 MB di immagini ridimensionate) ed è quella che Render
+# pubblica. Senza, il sito online non avrebbe né dati né foto.
+!server/dati/outfits_ui.json
+!mystylist/public/media/

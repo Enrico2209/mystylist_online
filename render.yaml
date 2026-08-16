@@ -1,13 +1,13 @@
-# Deploy su Render: API Node + frontend statico.
+# Deploy su Render: API Node + frontend statico. Servono solo GitHub e Render.
 #
-# Le foto NON stanno qui: sono 435 MB e vanno su object storage (R2/S3),
-# indicato all'API con MEDIA_BASE_URL. Il JSON degli outfit sta con loro e
-# l'API lo scarica all'avvio da OUTFITS_JSON_URL. Così il servizio resta
-# leggero e una nuova tornata di immagini non richiede un nuovo deploy:
-# si ricarica il JSON con POST /api/ricarica.
+# Le foto stanno nel repo, ma nella versione web: prepara_web.py le riduce da
+# 435 MB a 43 MB (WebP a 1200 px), che a schermo non si distinguono e stanno
+# in un repository senza problemi. Gli originali restano in locale. Così non
+# serve né un bucket né un terzo account.
 #
 # I valori con sync:false si inseriscono a mano nel pannello di Render, una
-# volta sola: sono segreti e non devono stare in un file versionato.
+# volta sola: sono segreti, o dipendono da domini che Render assegna al primo
+# deploy e che quindi non si possono scrivere qui.
 
 services:
   - type: web
@@ -23,9 +23,9 @@ services:
         sync: false
       - key: JWT_SECRET            # node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
         sync: false
-      - key: MEDIA_BASE_URL        # es. https://media.tuodominio.it
-        sync: false
-      - key: OUTFITS_JSON_URL      # es. https://media.tuodominio.it/outfits_ui.json
+      - key: OUTFITS_JSON          # il JSON viaggia col servizio
+        value: ./dati/outfits_ui.json
+      - key: MEDIA_BASE_URL        # <indirizzo del frontend qui sotto>/media
         sync: false
       - key: CORS_ORIGIN           # l'indirizzo del frontend qui sotto
         sync: false
