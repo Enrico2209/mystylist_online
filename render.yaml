@@ -1,0 +1,53 @@
+# Deploy su Render: API Node + frontend statico.
+#
+# Le foto NON stanno qui: sono 435 MB e vanno su object storage (R2/S3),
+# indicato all'API con MEDIA_BASE_URL. Il JSON degli outfit sta con loro e
+# l'API lo scarica all'avvio da OUTFITS_JSON_URL. Così il servizio resta
+# leggero e una nuova tornata di immagini non richiede un nuovo deploy:
+# si ricarica il JSON con POST /api/ricarica.
+#
+# I valori con sync:false si inseriscono a mano nel pannello di Render, una
+# volta sola: sono segreti e non devono stare in un file versionato.
+
+services:
+  - type: web
+    name: mystylist-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/salute
+    envVars:
+      - key: DATABASE_URL          # stringa di connessione Neon
+        sync: false
+      - key: JWT_SECRET            # node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+        sync: false
+      - key: MEDIA_BASE_URL        # es. https://media.tuodominio.it
+        sync: false
+      - key: OUTFITS_JSON_URL      # es. https://media.tuodominio.it/outfits_ui.json
+        sync: false
+      - key: CORS_ORIGIN           # l'indirizzo del frontend qui sotto
+        sync: false
+      - key: NODE_VERSION
+        value: "22"
+
+  - type: web
+    name: mystylist
+    runtime: static
+    rootDir: mystylist
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL          # l'indirizzo dell'API qui sopra
+        sync: false
+    routes:
+      # La UI è una single-page app: senza questa regola un ricaricamento su
+      # /dashboard chiederebbe a Render un file che non esiste e darebbe 404.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY

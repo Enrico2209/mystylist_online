@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+
+# Contiene la stringa di connessione al database e il segreto dei token:
+# in produzione questi valori si mettono fra le variabili d'ambiente di
+# Render, mai in un file che finisce nel repository.
+.env
+.env.local
+*.env
+
+# I file di lavoro della pipeline non appartengono al repo della UI
+*.parquet
+*.jsonl
+outfits_ui*.json
