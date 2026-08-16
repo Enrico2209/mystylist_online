@@ -116,14 +116,7 @@ git push -u origin main
 Il `.gitignore` tiene fuori `.env`: la stringa Neon e il segreto dei token
 non devono finire nel repository.
 
-**2. Crea l'utente vero** prima di esporre l'API — in tabella c'è solo
-`Ciao`/`Ciao`, che è una password da cancellare:
-
-```
-node crea_utente.js francesco
-```
-
-**3. Render** → New → Blueprint, puntato al repo. `render.yaml` descrive già
+**2. Render** → New → Blueprint, puntato al repo. `render.yaml` descrive già
 i due servizi. Al **primo** giro si compilano:
 
 | variabile | servizio | valore |
@@ -142,6 +135,20 @@ si aggiungono e si rilancia:
 
 Il piano gratuito spegne il servizio dopo 15 minuti di inattività: la prima
 richiesta dopo una pausa aspetta ~30 secondi.
+
+## Utenti
+
+L'accesso è `Ciao`/`Ciao`, la coppia con cui è nato il progetto. La password
+in tabella è ora un hash bcrypt (convertita al primo accesso riuscito), non
+più testo in chiaro, ma resta una password indovinabile al primo tentativo:
+finché l'indirizzo del frontend non circola va bene, quando circolerà no.
+
+Per aggiungere uno stilista o cambiare una password — minimo 8 caratteri,
+digitata al momento e mai passata dalla riga di comando:
+
+```
+node crea_utente.js francesco
+```
 
 **Dopo una nuova tornata di immagini:**
 
