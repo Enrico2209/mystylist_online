@@ -98,24 +98,15 @@ WHERE u.responso='no' AND u.commento IS NOT NULL;
 
 ## Metterlo online
 
-Tre pezzi: il database (Neon, già online), l'API e il frontend su Render, le
-foto su object storage. Le foto non stanno su Render: sono 435 MB, e a ogni
-tornata di immagini cambierebbero — un CDN le serve meglio e senza rideploy.
+Servono due account: **GitHub** e **Render**. Il database (Neon) è già online
+e le foto viaggiano nel repository, perché `prepara_web.py` le riduce da
+435 MB a 43 MB — WebP a 1200 px, che nel riquadro da 500 px della UI non si
+distinguono dagli originali. Gli originali restano in locale.
 
-**1. Le foto e il JSON** su Cloudflare R2 (gratis fino a 10 GB) o S3:
+Sono già pronti: `git init` fatto, tre commit sul ramo `main`, immagini web
+in `mystylist/public/media` e JSON in `server/dati/`.
 
-```
-export R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=...
-cd "../../nuvolari backend" && python3 carica_media.py --prova   # cosa caricherebbe
-cd "../../nuvolari backend" && python3 carica_media.py
-```
-
-Carica solo le immagini generate, le miniature e le foto dei capi che
-compaiono negli outfit — non il catalogo intero, che serve alla pipeline.
-Poi si dà accesso pubblico in lettura al bucket (R2 → Settings → Public
-Development URL, oppure un dominio tuo).
-
-**2. Il repository su GitHub.** Render tira da lì:
+**1. Crea un repository vuoto su GitHub** (privato), poi:
 
 ```
 git remote add origin https://github.com/<tuo-utente>/mystylist.git
@@ -125,27 +116,44 @@ git push -u origin main
 Il `.gitignore` tiene fuori `.env`: la stringa Neon e il segreto dei token
 non devono finire nel repository.
 
-**3. Render.** New → Blueprint, si punta al repo: `render.yaml` descrive già
-i due servizi. Poi si compilano a mano le variabili marcate `sync: false`:
-
-| variabile | dove |
-|---|---|
-| `DATABASE_URL` | la stessa stringa Neon che usi in locale |
-| `JWT_SECRET` | **nuovo**, non quello di sviluppo |
-| `MEDIA_BASE_URL` | l'indirizzo pubblico del bucket |
-| `OUTFITS_JSON_URL` | `<bucket>/outfits_ui.json` |
-| `CORS_ORIGIN` | l'indirizzo del frontend su Render |
-| `VITE_API_URL` | (sul servizio statico) l'indirizzo dell'API |
-
-`CORS_ORIGIN` e `VITE_API_URL` si sanno solo dopo il primo deploy, perché
-Render assegna i domini: si mettono al secondo giro e si rilancia.
-
-**Dopo una nuova tornata di immagini**, online non serve un rideploy:
+**2. Crea l'utente vero** prima di esporre l'API — in tabella c'è solo
+`Ciao`/`Ciao`, che è una password da cancellare:
 
 ```
-python3 carica_media.py                              # le nuove foto
-curl -X POST https://<api>/api/ricarica -H "Authorization: Bearer <token>"
+node crea_utente.js francesco
 ```
+
+**3. Render** → New → Blueprint, puntato al repo. `render.yaml` descrive già
+i due servizi. Al **primo** giro si compilano:
+
+| variabile | servizio | valore |
+|---|---|---|
+| `DATABASE_URL` | api | la stessa stringa Neon del locale |
+| `JWT_SECRET` | api | **nuovo**, non quello di sviluppo |
+
+Render assegna i domini solo dopo il primo deploy, quindi al **secondo** giro
+si aggiungono e si rilancia:
+
+| variabile | servizio | valore |
+|---|---|---|
+| `MEDIA_BASE_URL` | api | `https://<frontend>.onrender.com/media` |
+| `CORS_ORIGIN` | api | `https://<frontend>.onrender.com` |
+| `VITE_API_URL` | frontend | `https://<api>.onrender.com` |
+
+Il piano gratuito spegne il servizio dopo 15 minuti di inattività: la prima
+richiesta dopo una pausa aspetta ~30 secondi.
+
+**Dopo una nuova tornata di immagini:**
+
+```
+cd "../../nuvolari backend"
+python3 build_ui_json.py && python3 make_thumbs.py && python3 prepara_web.py
+cd - && git add -A && git commit -m "nuove immagini" && git push
+```
+
+Render ricostruisce da sé. In alternativa, se le foto stanno su un bucket
+(`carica_media.py` carica su R2/S3 le versioni piene), basta caricare e
+chiamare `POST /api/ricarica` senza rideploy.
 
 ## Tornare indietro
 
