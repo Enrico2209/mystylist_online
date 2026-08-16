@@ -14,6 +14,27 @@ Il ponte fra le due è la colonna `matches.codice`, che contiene l'`outfit_id`
 esadecimale del JSON. `matches.id` resta un intero, così `user_data` e i
 giudizi già dati non vanno toccati.
 
+## Accesso
+
+Il login rilascia un token firmato (JWT) e ogni endpoint ricava l'utente da
+lì. L'`iduser` mandato dal client non è più una credenziale: prima bastava
+`{"iduser": 1}` nel corpo della richiesta per leggere e scrivere i giudizi
+senza passare dal login.
+
+Le password sono in hash bcrypt. Quelle rimaste in chiaro vengono convertite
+da sé al primo accesso riuscito, senza chiedere a nessuno di reimpostarle.
+
+```
+node crea_utente.js francesco       # crea, o cambia la password
+```
+
+`JWT_SECRET` è obbligatorio: senza, il server non parte, perché i token
+sarebbero falsificabili. Per generarne uno:
+
+```
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
 ## Avvio
 
 ```
@@ -73,6 +94,57 @@ WHERE responso='no' GROUP BY 1 ORDER BY 2 DESC;
 SELECT m.codice, u.motivi, u.commento FROM user_data u
 JOIN matches m ON m.id=u.id_match
 WHERE u.responso='no' AND u.commento IS NOT NULL;
+```
+
+## Metterlo online
+
+Tre pezzi: il database (Neon, già online), l'API e il frontend su Render, le
+foto su object storage. Le foto non stanno su Render: sono 435 MB, e a ogni
+tornata di immagini cambierebbero — un CDN le serve meglio e senza rideploy.
+
+**1. Le foto e il JSON** su Cloudflare R2 (gratis fino a 10 GB) o S3:
+
+```
+export R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=...
+cd "../../nuvolari backend" && python3 carica_media.py --prova   # cosa caricherebbe
+cd "../../nuvolari backend" && python3 carica_media.py
+```
+
+Carica solo le immagini generate, le miniature e le foto dei capi che
+compaiono negli outfit — non il catalogo intero, che serve alla pipeline.
+Poi si dà accesso pubblico in lettura al bucket (R2 → Settings → Public
+Development URL, oppure un dominio tuo).
+
+**2. Il repository su GitHub.** Render tira da lì:
+
+```
+git remote add origin https://github.com/<tuo-utente>/mystylist.git
+git push -u origin main
+```
+
+Il `.gitignore` tiene fuori `.env`: la stringa Neon e il segreto dei token
+non devono finire nel repository.
+
+**3. Render.** New → Blueprint, si punta al repo: `render.yaml` descrive già
+i due servizi. Poi si compilano a mano le variabili marcate `sync: false`:
+
+| variabile | dove |
+|---|---|
+| `DATABASE_URL` | la stessa stringa Neon che usi in locale |
+| `JWT_SECRET` | **nuovo**, non quello di sviluppo |
+| `MEDIA_BASE_URL` | l'indirizzo pubblico del bucket |
+| `OUTFITS_JSON_URL` | `<bucket>/outfits_ui.json` |
+| `CORS_ORIGIN` | l'indirizzo del frontend su Render |
+| `VITE_API_URL` | (sul servizio statico) l'indirizzo dell'API |
+
+`CORS_ORIGIN` e `VITE_API_URL` si sanno solo dopo il primo deploy, perché
+Render assegna i domini: si mettono al secondo giro e si rilancia.
+
+**Dopo una nuova tornata di immagini**, online non serve un rideploy:
+
+```
+python3 carica_media.py                              # le nuove foto
+curl -X POST https://<api>/api/ricarica -H "Authorization: Bearer <token>"
 ```
 
 ## Tornare indietro
