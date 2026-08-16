@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { IconHanger2, IconX, IconCheck, IconExternalLink, IconLogout } from '@tabler/icons-react';
+import { IconHanger2, IconX, IconCheck, IconExternalLink, IconLogout, IconArrowBackUp } from '@tabler/icons-react';
 import { posta, prendi, leggiToken, leggiUtente, chiudiSessione, SessioneScaduta } from "./api.js";
 import ModaleRifiuto from "./ModaleRifiuto.jsx";
 
@@ -76,8 +76,8 @@ function Dashboard(){
 
     // Anche un outfit già giudicato si può riaprire: il verdetto si corregge,
     // /api/giudica aggiorna la riga invece di aggiungerne una seconda.
-    const corrente = revisionare.find((o)=>o.codice===selezionato)
-        || giudicati.find((o)=>o.codice===selezionato) || null;
+    const giudicato = giudicati.find((o)=>o.codice===selezionato) || null;
+    const corrente = revisionare.find((o)=>o.codice===selezionato) || giudicato || null;
 
     const giudica= useCallback(async(responso, commento, motivi)=>{
         if(!corrente || inCorso) return;
@@ -93,6 +93,21 @@ function Dashboard(){
             setInCorso(false);
         }
     },[corrente, inCorso, carica, gestisciErrore]);
+
+    // Rimette un outfit revisionato nella coda generale: il verdetto si
+    // toglie del tutto, insieme al motivo che lo accompagnava.
+    const rimetti= useCallback(async()=>{
+        if(!giudicato || inCorso) return;
+        setInCorso(true);
+        try{
+            await posta("/api/annulla", {id_match: giudicato.id});
+            await carica();
+        }catch(e){
+            gestisciErrore(e);
+        }finally{
+            setInCorso(false);
+        }
+    },[giudicato, inCorso, carica, gestisciErrore]);
 
     // Le scorciatoie promesse dall'intestazione.
     useEffect(()=>{
@@ -218,6 +233,16 @@ function Dashboard(){
                                         <span>{corrente.genere}</span>
                                         <span>{prezzo(corrente.prezzo_totale, corrente.prezzo_completo)}</span>
                                         <span>compatibilità {Math.round(corrente.compatibilita*100)}%</span>
+                                    </div>}
+                                {giudicato &&
+                                    <div className="riga-revisionato">
+                                        <span className={giudicato.responso==="si" ? "esito-si" : "esito-no"}>
+                                            {giudicato.responso==="si" ? "Approvato" : "Rifiutato"}
+                                        </span>
+                                        {giudicato.commento && <span className="esito-commento">“{giudicato.commento}”</span>}
+                                        <span className={`rimetti ${inCorso ? "disabilitato" : ""}`} onClick={rimetti}>
+                                            <IconArrowBackUp size={14} stroke={2} /> Rimetti in revisione
+                                        </span>
                                     </div>}
                                 <div className="container-bottoni-tinder">
                                     <div className="rifiuta" onClick={()=>corrente && setModaleAperta(true)}><IconX stroke={2} />Rifiuta</div>

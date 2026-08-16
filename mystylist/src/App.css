@@ -490,6 +490,54 @@
     color: #646464;
 }
 
+/* Riga che compare solo quando l'outfit aperto è già stato revisionato:
+   dice com'era andata e permette di rimetterlo nella coda generale. */
+.riga-revisionato {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 8px 12px;
+    border: 1px solid #E5E5E5;
+    border-radius: 8px;
+    background-color: #FCFCFB;
+    font-family: 'Poppins', sans-serif;
+    font-size: 12px;
+}
+
+.esito-si { color: #0B690A; font-weight: 600; }
+.esito-no { color: #8E2727; font-weight: 600; }
+
+.esito-commento {
+    flex: 1;
+    min-width: 0;
+    font-style: italic;
+    color: #8A8A8A;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rimetti {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    padding: 4px 10px;
+    cursor: pointer;
+    border: 1px solid #E5E5E5;
+    border-radius: 6px;
+    background-color: white;
+    color: #646464;
+    white-space: nowrap;
+}
+
+.rimetti:hover {
+    border-color: #6EB0FF;
+    color: #0D7CFF;
+    transition: 0.2s ease-in-out;
+}
+
 .banner-errore {
     margin-top: 4px;
     margin-bottom: 14px;

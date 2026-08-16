@@ -170,6 +170,26 @@ app.post("/api/giudicato", richiedeAccesso, async(req, res)=>{
     }
 });
 
+// Rimette un outfit già giudicato nella coda generale.
+//
+// La riga viene cancellata invece di essere marcata "non giudicato": con il
+// verdetto se ne va anche il motivo del rifiuto, che senza il rifiuto non
+// vuol dire più niente e falserebbe il conteggio dei difetti.
+app.post("/api/annulla", richiedeAccesso, async(req, res)=>{
+    const iduser = req.utente.id;
+    const {id_match}=req.body;
+    try{
+        const r = await pool.query(
+            `DELETE FROM user_data WHERE id_user=$1 AND id_match=$2`, [iduser, id_match]);
+        if (!r.rowCount) {
+            return res.status(404).json({errore: "Questo outfit non risulta revisionato."});
+        }
+        res.json({ok: true});
+    }catch(errore){
+        erroreDb(res, errore);
+    }
+});
+
 // Registra il verdetto dello stilista. Ripetibile: se lo stesso outfit viene
 // giudicato di nuovo il responso viene aggiornato, non duplicato.
 app.post("/api/giudica", richiedeAccesso, async(req, res)=>{
