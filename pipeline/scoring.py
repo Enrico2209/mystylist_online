@@ -166,6 +166,11 @@ def color_harmony(palette_a, palette_b, top_k: int = 2) -> float:
 
 REFERENCE_STYLE_NORM = 0.55  # ~mediana della norma dei vettori stile nel catalogo (vedi analisi)
 
+# Coseno mediano fra due capi presi a caso nel catalogo: è, alla lettera, il
+# valore di "non ne so niente". Verso questo si smorza un capo dal segnale
+# debole, invece che verso zero (vedi style_match).
+COSENO_NEUTRO = 0.60
+
 
 def style_match(style_vec_a, style_vec_b, formality_a: float, formality_b: float,
                  formality_penalty_weight: float = 0.5) -> float:
@@ -181,6 +186,15 @@ def style_match(style_vec_a, style_vec_b, formality_a: float, formality_b: float
     cosa sia quel capo stilisticamente. Smorzando per la norma minima dei
     due vettori (rispetto alla mediana del catalogo), un capo dal segnale
     debole non viene più trattato come "jolly" automatico.
+
+    Lo smorzamento però tira verso COSENO_NEUTRO, non verso zero. Moltiplicare
+    e basta affermava una cosa che non sappiamo: che i due capi sono lontani.
+    Una felpa e un jeans con vettori IDENTICI (coseno 1,000) e la stessa
+    formalità uscivano a 0,485, perché la felpa ha una scheda scarna — 46% del
+    catalogo sta sotto la soglia e prendeva lo stesso trattamento. Ora un capo
+    poco descritto finisce al valore che avrebbe con un capo qualsiasi: non
+    diventa un jolly che batte tutti, e non viene nemmeno dichiarato
+    incompatibile con qualcosa con cui va d'accordo.
     """
     a = np.asarray(style_vec_a, dtype=float)
     b = np.asarray(style_vec_b, dtype=float)
@@ -188,7 +202,7 @@ def style_match(style_vec_a, style_vec_b, formality_a: float, formality_b: float
     cos = float(np.dot(a, b) / (norm_a * norm_b)) if norm_a > 0 and norm_b > 0 else 0.0
 
     confidence = min(1.0, min(norm_a, norm_b) / REFERENCE_STYLE_NORM)
-    cos *= confidence
+    cos = confidence * cos + (1 - confidence) * COSENO_NEUTRO
 
     formality_diff = abs(formality_a - formality_b)  # formality_norm è già 0-1
     penalty = formality_penalty_weight * formality_diff

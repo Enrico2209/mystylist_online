@@ -80,6 +80,50 @@ def _background_mask(rgb: np.ndarray, tolerance: float = BG_TOLERANCE) -> np.nda
     return mask
 
 
+# Quota di capo sotto la quale il flood-fill si sta mangiando il prodotto e non
+# solo lo sfondo. La mediana del catalogo è ~29% di capo; sotto il 15% non è più
+# una foto ravvicinata, è uno scontorno sbagliato.
+FOREGROUND_PLAUSIBILE = 0.15
+# ...e sopra la quale non è più un capo su fondale ma un dettaglio ravvicinato.
+# Una foto di catalogo ha sempre dello sfondo: se non se ne trova, il flood-fill
+# non è riuscito a propagarsi, non è sparito il fondale.
+FOREGROUND_MASSIMO = 0.80
+# Tolleranze provate in ordine, dalla più larga alla più stretta.
+TOLLERANZE_SFONDO = (BG_TOLERANCE, 14, 12, 10, 8, 6, 5, 4, 3)
+
+
+def _maschera_sfondo_adattiva(rgb: np.ndarray):
+    """Sceglie la tolleranza che lascia in piedi un capo di dimensioni credibili.
+
+    Con la tolleranza fissa a 18 un capo pallido rientra nella distanza dal
+    bianco e viene inghiottito insieme al fondale. Misurato su una t-shirt
+    celeste: 96% dell'immagine classificato come sfondo (mediana del catalogo
+    71%), e del 4% rimasto la maggior parte era la stampa gialla sul petto —
+    così il colore dominante a registro diventava un giallo pallido e la
+    maglia risultava abbinabile al nero come se fosse panna.
+
+    Il criterio ha però bisogno di un tetto oltre che di un pavimento. Con il
+    solo pavimento, su 26 capi la tolleranza scendeva fino a 3, il riempimento
+    non si propagava più e la maschera restava vuota: sfondo 0,00, capo "100%
+    dell'immagine", e il colore calcolato sul bianco del fondale. Un difetto
+    speculare a quello che si voleva togliere.
+
+    Se nessuna tolleranza produce una quota credibile si prende la meno
+    sbagliata — quella che ci va più vicino — invece della più stretta.
+    """
+    migliore, distanza_migliore = None, float("inf")
+    for tolleranza in TOLLERANZE_SFONDO:
+        maschera = _background_mask(rgb, tolleranza)
+        capo = (~maschera).mean()
+        if FOREGROUND_PLAUSIBILE <= capo <= FOREGROUND_MASSIMO:
+            return maschera
+        distanza = (FOREGROUND_PLAUSIBILE - capo if capo < FOREGROUND_PLAUSIBILE
+                    else capo - FOREGROUND_MASSIMO)
+        if distanza < distanza_migliore:
+            migliore, distanza_migliore = maschera, distanza
+    return migliore
+
+
 def _background_fraction(image_path: Path) -> float:
     # stessa risoluzione usata poi per l'estrazione colore (MAX_DIM): a risoluzioni
     # più basse i pattern fini (righe, micro-texture) si sfocano in un campo quasi
@@ -125,7 +169,7 @@ def dominant_colors_lab(image_path: Path, n_colors: int = N_COLOR_CLUSTERS) -> d
     più la frazione di sfondo rilevata (utile per il controllo qualità).
     """
     rgb = _load_rgb_array(image_path)
-    mask = _background_mask(rgb)
+    mask = _maschera_sfondo_adattiva(rgb)
     foreground = rgb[~mask]
 
     if foreground.shape[0] < MIN_FOREGROUND_FRAC * rgb.shape[0] * rgb.shape[1]:

@@ -283,6 +283,34 @@ ACCESSORI_CONTENITORE = re.compile(
     r"tracolle|pochette|backpack|bkpack|daypack|duffel|carry bag)\b")
 
 
+# Cappotti travestiti da giubbotto. Stessa famiglia di difetti del cargo e del
+# K-Way — la parola generica del titolo nasconde il capo — ma qui il rimedio non
+# può stare in GARMENT_FORMALITY_SPECIFICO, perché nel titolo la forma non
+# compare affatto: "GIUBBOTTO UOMO NUVOLARI OTIS NAVY" è un caban di lana
+# doppiopetto, e lo si scopre solo leggendo la scheda.
+CAPPOTTO_FORMA = re.compile(
+    r"(caban|montgomery|doppiopetto|sei bottoni|peacoat|cappotto|trench)")
+# Il titolo ha l'ultima parola: un gilet imbottito e una giacca a vento citano
+# il cappotto nella scheda per confronto, ma cappotti non sono.
+CAPPOTTO_ESCLUSI = re.compile(r"\b(gilet|giacca a vento|piumino|smanicato)\b")
+# Frase di repertorio che elenca i reparti del negozio invece di descrivere il
+# prodotto ("disponibili in vari stili come sneakers, stivali o mocassini").
+DESCRIZIONE_DI_REPERTORIO = re.compile(r"variet(?:a|à) di stili come")
+CAPPOTTO_FORMALITA_MINIMA = 3
+
+
+def e_un_cappotto(metadata: dict) -> bool:
+    titolo = senza_accenti(metadata.get("title") or "").lower()
+    if CAPPOTTO_ESCLUSI.search(titolo):
+        return False
+    if CAPPOTTO_FORMA.search(titolo):
+        return True
+    descrizione = senza_accenti(metadata.get("description_text") or "").lower()
+    if DESCRIZIONE_DI_REPERTORIO.search(descrizione):
+        return False
+    return bool(CAPPOTTO_FORMA.search(descrizione))
+
+
 def formalita_da_tipo(title: str):
     """Formalità 1–5 dedotta dal tipo di capo nel titolo, o None.
 
@@ -778,6 +806,13 @@ def derive_attributes(metadata: dict, category_path: Path) -> dict:
         if ACCESSORI_CONTENITORE.search(senza_accenti(metadata.get("title") or "").lower()):
             tetto = 1
         formality_score = min(formality_score, tetto)
+
+    # Pavimento per i cappotti. "Giubbotto" non dice niente sul registro, e un
+    # caban di lana doppiopetto a sei bottoni finiva a 2 come una windbreaker —
+    # da lì il caban blu sopra la tuta. La forma la nomina la descrizione, non
+    # il titolo, quindi si guardano tutt'e due (vedi CAPPOTTO_FORMA).
+    if e_un_cappotto(metadata):
+        formality_score = max(formality_score, CAPPOTTO_FORMALITA_MINIMA)
  
     # --- stagione ---
     # Il tipo di capo viene per primo: è l'unico segnale non ambiguo. Una
