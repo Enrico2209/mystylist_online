@@ -223,16 +223,52 @@ def classify_top_senza_collo(title: str) -> bool:
     return keyword in TOP_SENZA_COLLO
 
 
+# --- Regola 4 (utente): il cappotto non va sopra una tuta -----------------
+#
+# Stessa storia del mocassino, sul capospalla: "giubbotto" non dice il registro.
+# Il caban di lana blu doppiopetto a sei bottoni — verificato sulla foto del
+# prodotto — si chiama GIUBBOTTO UOMO NUVOLARI OTIS NAVY e sta a formalità 2,
+# quindi finiva sopra una tuta con le sneakers.
+#
+# Il vincolo non passa dalla formalità di proposito: alzare quel capo da 2 a 3
+# non avrebbe tolto l'outfit (la dispersione ammessa è esattamente un gradino,
+# 0.25 <= 0.30), e alzarlo a 4 lo avrebbe tolto anche dagli abbinamenti giusti
+# col jeans. La formalità è un asse solo: dice quanto, non dice con cosa.
+FORMA_CAPPOTTO = re.compile(r"(caban|montgomery|doppiopetto|sei bottoni|peacoat|cappotto|trench)", re.I)
+
+# Un gilet imbottito e una giacca a vento citano il cappotto nella scheda ma
+# cappotti non sono: il titolo qui è affidabile e ha l'ultima parola.
+NON_E_UN_CAPPOTTO = re.compile(r"\b(gilet|giacca a vento|piumino|smanicato)\b", re.I)
+
+BOTTOM_DA_TUTA = re.compile(r"\b(tuta|jogger\w*|sweatpant\w*)\b", re.I)
+
+
+def classify_cappotto(title: str, descrizione: str = "") -> bool:
+    """Vero se il capospalla ha la forma di un cappotto (caban compreso)."""
+    if NON_E_UN_CAPPOTTO.search(title or ""):
+        return False
+    if FORMA_CAPPOTTO.search(title or ""):
+        return True
+    if DESCRIZIONE_DI_REPERTORIO.search(descrizione or ""):
+        return False
+    return bool(FORMA_CAPPOTTO.search(descrizione or ""))
+
+
+def classify_bottom_da_tuta(title: str) -> bool:
+    return bool(BOTTOM_DA_TUTA.search(title or ""))
+
+
 CATALOGO = Path(__file__).resolve().parent / "nuvolari_full_organizzato"
 
 
-def _descrizioni_calzature(relpath_scarpe: set) -> dict:
-    """relpath -> description_text, solo per le calzature.
+def _descrizioni(relpath_voluti: set) -> dict:
+    """relpath -> description_text, solo per i capi richiesti.
 
     Il parquet porta il titolo ma non la descrizione, e la descrizione è
-    l'unico posto dove sta la forma della scarpa. Si legge dal catalogo, che è
+    l'unico posto dove sta la forma del capo: la scarpa da barca che si chiama
+    "sneakers", il caban che si chiama "giubbotto". Si legge dal catalogo, che è
     la stessa fonte da cui il parquet è nato. Se il catalogo non c'è (una copia
-    del solo codice) si continua senza: la regola perde i 7 casi che si
+    del solo codice) si continua senza: le regole perdono i casi che si
     dichiarano solo nella scheda, non l'intero funzionamento.
     """
     if not CATALOGO.exists():
@@ -240,7 +276,7 @@ def _descrizioni_calzature(relpath_scarpe: set) -> dict:
     out = {}
     for p in CATALOGO.rglob("metadata.json"):
         rel = str(p.parent.relative_to(CATALOGO))
-        if rel not in relpath_scarpe:
+        if rel not in relpath_voluti:
             continue
         try:
             out[rel] = json.loads(p.read_text(encoding="utf-8")).get("description_text") or ""
@@ -294,15 +330,22 @@ def load_and_prepare(features_parquet: str) -> pd.DataFrame:
     df["sleeve"] = df.apply(lambda r: classify_sleeve(r["title"], r["relpath"]), axis=1)
     df["leg_length"] = df["title"].apply(classify_leg_length)
 
-    # La forma della scarpa è l'unico attributo che il titolo non basta a dare
-    # (vedi classify_calzatura): serve la descrizione, che sta nel catalogo e
-    # non nel parquet. Si legge solo per le calzature — 210 file su 2901.
-    descrizioni = _descrizioni_calzature(set(df.loc[df["slot"] == "shoes", "relpath"]))
+    # La forma del capo è l'unico attributo che il titolo non basta a dare (vedi
+    # classify_calzatura e classify_cappotto): serve la descrizione, che sta nel
+    # catalogo e non nel parquet. Si legge solo per scarpe e capispalla — 453
+    # schede su 2901.
+    interessati = set(df.loc[df["slot"].isin(["shoes", "outerwear"]), "relpath"])
+    descrizioni = _descrizioni(interessati)
     df["mocassino"] = df.apply(
         lambda r: r["slot"] == "shoes"
         and classify_calzatura(r["title"], descrizioni.get(r["relpath"], "")), axis=1)
     df["top_senza_collo"] = df.apply(
         lambda r: r["slot"] == "top" and classify_top_senza_collo(r["title"]), axis=1)
+    df["cappotto"] = df.apply(
+        lambda r: r["slot"] == "outerwear"
+        and classify_cappotto(r["title"], descrizioni.get(r["relpath"], "")), axis=1)
+    df["bottom_da_tuta"] = df.apply(
+        lambda r: r["slot"] == "bottom" and classify_bottom_da_tuta(r["title"]), axis=1)
 
     # Vettore di stile e tavolozza pronti da usare. Sono gli stessi valori di
     # sempre, solo già estratti: score_pair viene chiamata milioni di volte, e
@@ -395,6 +438,17 @@ def _calzatura_ok(current_items, slot: str, candidate_row: pd.Series) -> bool:
     return True
 
 
+def _cappotto_ok(current_items, slot: str, candidate_row: pd.Series) -> bool:
+    """Regola 4 (utente): niente cappotto o caban sopra una tuta."""
+    if slot == "outerwear" and candidate_row["cappotto"]:
+        if _existing_value(current_items, "bottom", "bottom_da_tuta"):
+            return False
+    elif slot == "bottom" and candidate_row["bottom_da_tuta"]:
+        if _existing_value(current_items, "outerwear", "cappotto"):
+            return False
+    return True
+
+
 def _outerwear_allowed(current_items) -> bool:
     """Regola 2 (utente): giacche/outerwear solo se i pantaloni sono lunghi
     — niente giacca sui pantaloncini. (La parte "niente felpe sui
@@ -467,6 +521,7 @@ def candidates_for_slot(df: pd.DataFrame, slot: str, anchor_row: pd.Series, used
         # erano l'unica via per cui un capo invernale entrava in un outfit estivo
         candidates = _filtra(candidates, lambda r: _seasonal_coherence_ok(current_items, slot, r))
         candidates = _filtra(candidates, lambda r: _calzatura_ok(current_items, slot, r))
+        candidates = _filtra(candidates, lambda r: _cappotto_ok(current_items, slot, r))
     return candidates
 
 

@@ -22,6 +22,13 @@ lunghezza. Non reinterpretare, non "migliorare", non sostituire.
 - **Il capo superiore va SEMPRE portato fuori dai pantaloni**, mai infilato dentro
   (niente *tucked-in*). Vale per camicie, magliette, polo, maglie e felpe, in ogni
   outfit e a qualsiasi livello di formalità, nessuna eccezione.
+- **Ogni capo elencato va indossato per intero e nel modo consueto.** Il capospalla
+  ha **entrambe le braccia dentro le maniche** — aperto o chiuso è indifferente — e
+  non va appoggiato su una spalla sola, sfilato a metà, tenuto in mano o portato al
+  braccio. Nessun capo va reso parziale: se compare, compare tutto.
+  *(Difetto osservato: un bomber di jeans grigio comparso solo sul lato sinistro del
+  corpo, con la manica della felpa che gli passava sopra dall'altro lato — a
+  guardarla, mezza giacca.)*
 
 ## 2. Età del modello, in funzione della formalità
 

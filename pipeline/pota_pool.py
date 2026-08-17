@@ -28,12 +28,20 @@ IMMAGINI = BASE / "outfit_images"
 MINIATURE = BASE / "outfit_thumbs"
 
 
-def viola_regola_calzature(outfit: dict, mocassini: set, top_informali: set) -> bool:
-    scarpe = outfit["slots"].get("shoes")
-    top = outfit["slots"].get("top")
-    if not scarpe or not top:
-        return False
-    return scarpe["relpath"] in mocassini and top["relpath"] in top_informali
+def _coppia(outfit: dict, slot_a: str, insieme_a: set, slot_b: str, insieme_b: set) -> bool:
+    """Vero se l'outfit contiene entrambi i capi vietati insieme."""
+    a, b = outfit["slots"].get(slot_a), outfit["slots"].get(slot_b)
+    return bool(a and b and a["relpath"] in insieme_a and b["relpath"] in insieme_b)
+
+
+def regole_violate(outfit: dict, gruppi: dict) -> list:
+    """Nome delle regole che questo outfit non rispetta più."""
+    rotte = []
+    if _coppia(outfit, "shoes", gruppi["mocassini"], "top", gruppi["top_informali"]):
+        rotte.append("R3 mocassino+t-shirt")
+    if _coppia(outfit, "outerwear", gruppi["cappotti"], "bottom", gruppi["bottom_tuta"]):
+        rotte.append("R4 cappotto+tuta")
+    return rotte
 
 
 def main():
@@ -42,21 +50,26 @@ def main():
     args = ap.parse_args()
 
     df = og.load_and_prepare(str(BASE / "features_clustered.parquet"))
-    mocassini = set(df.loc[df["mocassino"], "relpath"])
-    top_informali = set(df.loc[df["top_senza_collo"], "relpath"])
-    print(f"[*] {len(mocassini)} calzature classificate mocassino/barca")
+    gruppi = {
+        "mocassini": set(df.loc[df["mocassino"], "relpath"]),
+        "top_informali": set(df.loc[df["top_senza_collo"], "relpath"]),
+        "cappotti": set(df.loc[df["cappotto"], "relpath"]),
+        "bottom_tuta": set(df.loc[df["bottom_da_tuta"], "relpath"]),
+    }
+    print(f"[*] {len(gruppi['mocassini'])} calzature mocassino/barca, "
+          f"{len(gruppi['cappotti'])} capispalla con forma da cappotto")
 
     pool = [json.loads(l) for l in open(POOL, encoding="utf-8")]
-    da_togliere = [o for o in pool if viola_regola_calzature(o, mocassini, top_informali)]
+    da_togliere = [(o, r) for o in pool if (r := regole_violate(o, gruppi))]
 
-    print(f"[*] {len(da_togliere)} outfit su {len(pool)} violano la Regola 3 "
+    print(f"[*] {len(da_togliere)} outfit su {len(pool)} violano una regola nuova "
           f"({len(da_togliere) / len(pool) * 100:.1f}%)")
-    con_foto = [o for o in da_togliere if (IMMAGINI / f"{o['outfit_id']}.png").exists()]
+    con_foto = [o for o, _ in da_togliere if (IMMAGINI / f"{o['outfit_id']}.png").exists()]
     print(f"    di cui con immagine già generata: {len(con_foto)}")
-    for o in da_togliere:
+    for o, rotte in da_togliere:
         segno = "foto" if (IMMAGINI / f"{o['outfit_id']}.png").exists() else "   —"
-        print(f"    [{segno}] {o['outfit_id']}  {o['slots']['top']['title'][:34]:34s}"
-              f" + {o['slots']['shoes']['title'][:38]}")
+        print(f"    [{segno}] {o['outfit_id']}  {', '.join(rotte):22s}  {o['label'][:64]}")
+    da_togliere = [o for o, _ in da_togliere]
 
     if args.prova:
         print("\n(prova: non ho toccato niente)")
