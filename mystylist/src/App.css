@@ -755,3 +755,145 @@
     font-size: 12px;
     color: #646464;
 }
+
+/* --- finestre strette ----------------------------------------------------
+   Le tre colonne erano in percentuale fissa (30/40/30) senza nessun punto di
+   rottura: sotto una certa larghezza non si accorciano, si strozzano. A 768 px
+   i nomi dei capi diventavano "CA", "PA", "SC" e i prezzi perdevano l'euro; a
+   375 px la colonna centrale scendeva a 128 px e la foto dell'outfit — l'unica
+   cosa da giudicare — spariva del tutto (0x0, misurato), perché max-height:100%
+   dentro un contenitore schiacciato vale zero.
+
+   Le soglie non sono tonde per gusto: 1150 è dove la striscia dei capi comincia
+   a tagliare le scritte, 900 è dove la colonna centrale scende sotto i 380 px e
+   la foto diventa più piccola delle miniature di fianco. Da lì in giù le tre
+   colonne non hanno più senso e si impilano.                                 */
+
+/* Il riquadro del login era largo 446 px fissi: su un telefono da 411 px
+   partiva a -35 px, cioè con il bordo sinistro fuori dallo schermo e non
+   raggiungibile, perché il centraggio flex non genera scorrimento. */
+.mega-container-login {
+    padding: 20px;
+}
+
+/* max-width in percentuale qui non funziona: il riquadro sta in un contenitore
+   flex largo quanto il suo contenuto, quindi "100%" vale 446 px e non vincola
+   niente (misurato: restava largo 446 con il bordo a -35 px). Il tetto va preso
+   dalla finestra. */
+.login-container {
+    max-width: calc(100vw - 40px);
+}
+
+@media (max-width: 480px) {
+    /* 42 px di margine interno per lato su un riquadro da 335 lasciano al campo
+       poco più della metà della larghezza. */
+    .login-container {
+        padding-left: 22px;
+        padding-right: 22px;
+    }
+
+    .login-title { font-size: 24px; }
+}
+
+@media (max-width: 1150px) {
+    /* La colonna centrale si prende lo spazio che le due liste possono cedere:
+       è quella dove si guarda, le altre servono a scegliere. */
+    .column-1, .column-3 { width: 26%; }
+    .column-2 { width: 48%; }
+
+    .container-column-dashboard { gap: 18px; }
+
+    /* I capi smettono di spartirsi la larghezza e tengono la loro misura
+       minima: la striscia scorre già in orizzontale (overflow-x: auto), meglio
+       farla scorrere che continuare a stringere finché il brand sparisce. */
+    .capo {
+        flex: 0 0 auto;
+        min-width: 132px;
+    }
+}
+
+@media (max-width: 900px) {
+    /* Una colonna sola. L'outfit in revisione va per primo: è il lavoro, le
+       due liste sono navigazione e possono stare sotto. */
+    .container-dashboard {
+        height: auto;
+        min-height: 100vh;
+        padding-left: 18px;
+        padding-right: 18px;
+    }
+
+    .header-dashboard {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .container-column-dashboard {
+        flex-direction: column;
+        gap: 24px;
+    }
+
+    .column-1, .column-2, .column-3 {
+        width: 100%;
+        overflow-y: visible;
+    }
+
+    .column-2 { order: -1; }
+
+    /* Senza un'altezza minima la foto resta schiacciata anche impilata:
+       il contenitore è alto quanto il contenuto, e il contenuto è la foto. */
+    .img-outfit {
+        min-height: 320px;
+    }
+
+    /* Il tetto va messo sulla foto, non sul riquadro che la contiene: impilato
+       il riquadro ha height:auto, e un max-height:100% calcolato su un'altezza
+       automatica non vincola niente. La foto usciva sopra e sotto dal riquadro
+       — a 768 px copriva l'intestazione e la striscia dei capi. */
+    .foto-outfit {
+        max-height: 65vh;
+    }
+
+    /* Le liste non scorrono più da sole (scorre la pagina): senza un tetto
+       occuperebbero centinaia di schede prima di arrivare in fondo. */
+    .column-1, .column-3 {
+        max-height: 420px;
+        overflow-y: auto;
+    }
+}
+
+@media (max-width: 560px) {
+    .container-dashboard {
+        padding: 20px 14px;
+    }
+
+    .header-logo { font-size: 17px; }
+    .header-subtitle { font-size: 12px; }
+
+    /* Su schermo stretto le scorciatoie da tastiera non servono a nessuno. */
+    .shortcut-text { display: none; }
+
+    .img-outfit {
+        min-height: 260px;
+        padding: 8px;
+    }
+
+    .foto-outfit { max-height: 60vh; }
+
+    /* Rifiuta e Approva restano affiancati ma con testo più corto in altezza:
+       impilarli metterebbe Approva sotto il pollice, dove si preme per sbaglio. */
+    .container-bottoni-tinder { gap: 10px; }
+    .rifiuta, .approva { font-size: 15px; }
+
+    .nome-match-img-container { font-size: 14px; }
+    .img-under { padding-left: 16px; padding-right: 16px; }
+
+    /* In riga la nota si riduceva a una colonna di due parole per riga accanto
+       ai bottoni. Column-reverse la manda sotto, dove non toglie spazio. */
+    .modale-bottoni {
+        flex-direction: column-reverse;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .modale-nota { text-align: center; }
+}
