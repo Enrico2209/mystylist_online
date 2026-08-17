@@ -48,7 +48,10 @@ cp *.py *.md requirements.txt brand_list.json aggiorna_online.sh "$UI/pipeline/"
 
 # rete di sicurezza: se una chiave finisse in un sorgente, qui si fermerebbe
 # prima del commit invece di finire su GitHub
-if grep -rniE "AQ\.Ab8|AIza[0-9A-Za-z_-]{20,}|npg_|postgres(ql)?://[^ ]*:[^ ]*@" "$UI/pipeline" ; then
+# --exclude su sé stesso: questo file contiene i pattern per definizione, e
+# senza l'esclusione il controllo si autodenuncia a ogni esecuzione
+if grep -rniE --exclude=aggiorna_online.sh \
+     "AQ\.Ab8|AIza[0-9A-Za-z_-]{20,}|npg_|postgres(ql)?://[^ ]*:[^ ]*@" "$UI/pipeline" ; then
     echo "[!] possibile credenziale nei sorgenti copiati: non pubblico." >&2
     exit 1
 fi

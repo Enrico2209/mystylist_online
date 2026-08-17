@@ -61,6 +61,7 @@ Uso in notebook
 import hashlib
 import json
 import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -167,6 +168,87 @@ def classify_leg_length(title: str):
     return "corta" if keyword in SHORT_LEG_KEYWORDS else "lunga"
 
 
+# --- Regola 3 (utente): il mocassino vuole un top con un collo -------------
+#
+# "Un mocassino è troppo elegante per stare con maglie che non sono polo o
+# camicie". La formalità da sola non bastava a tenerli separati: un mocassino
+# sta a 3 e una t-shirt a 2, cioè un solo gradino, e FORMALITY_SPREAD_MAX ne
+# tollera esattamente uno.
+#
+# Solo parole che nominano LA FORMA. Restano fuori di proposito:
+#   slip-on   -> lo sono anche le Vans Authentic
+#   stringato -> vuol dire allacciato, lo sono anche le running
+#   ballerina -> è una scarpa da donna piatta, non un mocassino
+CALZATURA_ELEGANTE = re.compile(
+    r"(mocassin[oi]|loafer|penny loafer|scarp[ae] da barca|boat shoe)", re.I)
+
+# Frase di repertorio del catalogo: elenca i reparti del negozio, non descrive
+# il prodotto. Senza questa esclusione un anfibio e una New Balance risultavano
+# mocassini perché la scheda diceva "disponibili in vari stili come sneakers,
+# scarpe eleganti, stivali o mocassini".
+DESCRIZIONE_DI_REPERTORIO = re.compile(r"variet[àa] di stili come", re.I)
+
+# Quando è la sola descrizione a parlare, si accettano solo le forme che un
+# copywriter non usa per traslato. "Mocassino" da solo non basta: la scheda
+# della Vans Authentic — una skate shoe in tela, verificata sulla foto — la
+# chiama "questo mocassino sportivo". "Scarpa da barca" e "loafer" no: quelle
+# nominano un oggetto preciso.
+FORMA_INEQUIVOCABILE = re.compile(r"(scarp[ae] da barca|boat shoe|loafer)", re.I)
+
+# Top che con un mocassino non ci stanno. La maglieria (maglia, maglione,
+# cardigan) NON è qui: il maglione col mocassino è un abbinamento classico,
+# e in italiano "maglia" vuol dire quasi sempre quello.
+TOP_SENZA_COLLO = {"t-shirt", "tshirt", "maglietta", "canotta", "canotte", "top", "felpa", "felpe"}
+
+
+def classify_calzatura(title: str, descrizione: str = "") -> bool:
+    """Vero se la scarpa ha la forma del mocassino o della scarpa da barca.
+
+    Guarda anche la descrizione, non solo il titolo, perché il titolo mente: la
+    scarpa in camoscio beige della segnalazione si chiama "SNEAKERS UOMO FRED
+    PERRY B2346" ed è archiviata fra le sneakers, ma la sua stessa scheda dice
+    "rilegge la silhouette classica della scarpa da barca". Sono 7 casi su 28:
+    un quarto dei mocassini del catalogo non si dichiara tale nel titolo.
+    """
+    if CALZATURA_ELEGANTE.search(title or ""):
+        return True
+    if DESCRIZIONE_DI_REPERTORIO.search(descrizione or ""):
+        return False
+    return bool(FORMA_INEQUIVOCABILE.search(descrizione or ""))
+
+
+def classify_top_senza_collo(title: str) -> bool:
+    """Vero se il top è una t-shirt, una canotta, un top o una felpa."""
+    _slot, keyword = _find_slot_and_keyword(title)
+    return keyword in TOP_SENZA_COLLO
+
+
+CATALOGO = Path(__file__).resolve().parent / "nuvolari_full_organizzato"
+
+
+def _descrizioni_calzature(relpath_scarpe: set) -> dict:
+    """relpath -> description_text, solo per le calzature.
+
+    Il parquet porta il titolo ma non la descrizione, e la descrizione è
+    l'unico posto dove sta la forma della scarpa. Si legge dal catalogo, che è
+    la stessa fonte da cui il parquet è nato. Se il catalogo non c'è (una copia
+    del solo codice) si continua senza: la regola perde i 7 casi che si
+    dichiarano solo nella scheda, non l'intero funzionamento.
+    """
+    if not CATALOGO.exists():
+        return {}
+    out = {}
+    for p in CATALOGO.rglob("metadata.json"):
+        rel = str(p.parent.relative_to(CATALOGO))
+        if rel not in relpath_scarpe:
+            continue
+        try:
+            out[rel] = json.loads(p.read_text(encoding="utf-8")).get("description_text") or ""
+        except (OSError, ValueError):
+            continue
+    return out
+
+
 # Accessori che, quando il titolo non dichiara il genere, non vanno trattati
 # come unisex. Sono capi connotati: una tracolla street senza indicazione
 # risultava "neutra" e finiva su outfit donna. Cappelli, occhiali, zaini e
@@ -211,6 +293,16 @@ def load_and_prepare(features_parquet: str) -> pd.DataFrame:
     df["season"] = df.apply(_season_label, axis=1)
     df["sleeve"] = df.apply(lambda r: classify_sleeve(r["title"], r["relpath"]), axis=1)
     df["leg_length"] = df["title"].apply(classify_leg_length)
+
+    # La forma della scarpa è l'unico attributo che il titolo non basta a dare
+    # (vedi classify_calzatura): serve la descrizione, che sta nel catalogo e
+    # non nel parquet. Si legge solo per le calzature — 210 file su 2901.
+    descrizioni = _descrizioni_calzature(set(df.loc[df["slot"] == "shoes", "relpath"]))
+    df["mocassino"] = df.apply(
+        lambda r: r["slot"] == "shoes"
+        and classify_calzatura(r["title"], descrizioni.get(r["relpath"], "")), axis=1)
+    df["top_senza_collo"] = df.apply(
+        lambda r: r["slot"] == "top" and classify_top_senza_collo(r["title"]), axis=1)
 
     # Vettore di stile e tavolozza pronti da usare. Sono gli stessi valori di
     # sempre, solo già estratti: score_pair viene chiamata milioni di volte, e
@@ -290,6 +382,19 @@ def _seasonal_coherence_ok(current_items, slot: str, candidate_row: pd.Series) -
     return True
 
 
+def _calzatura_ok(current_items, slot: str, candidate_row: pd.Series) -> bool:
+    """Regola 3 (utente): niente t-shirt, canotte, top o felpe sotto un
+    mocassino. Vale nei due ordini di riempimento, perché le scarpe possono
+    entrare prima o dopo il top."""
+    if slot == "shoes" and candidate_row["mocassino"]:
+        if _existing_value(current_items, "top", "top_senza_collo"):
+            return False
+    elif slot == "top" and candidate_row["top_senza_collo"]:
+        if _existing_value(current_items, "shoes", "mocassino"):
+            return False
+    return True
+
+
 def _outerwear_allowed(current_items) -> bool:
     """Regola 2 (utente): giacche/outerwear solo se i pantaloni sono lunghi
     — niente giacca sui pantaloncini. (La parte "niente felpe sui
@@ -361,6 +466,7 @@ def candidates_for_slot(df: pd.DataFrame, slot: str, anchor_row: pd.Series, used
         # su TUTTI gli slot, non più solo top/bottom: accessori e capospalla
         # erano l'unica via per cui un capo invernale entrava in un outfit estivo
         candidates = _filtra(candidates, lambda r: _seasonal_coherence_ok(current_items, slot, r))
+        candidates = _filtra(candidates, lambda r: _calzatura_ok(current_items, slot, r))
     return candidates
 
 
