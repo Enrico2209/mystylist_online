@@ -150,6 +150,22 @@ GARMENT_SEASON = {
 }
 
 
+# La stagione dal TESTO vale solo se l'aggettivo stagionale descrive il capo
+# o il suo tessuto, non l'occasione d'uso. Misurato sulle schede: 405 capi su
+# 671 diventavano "estate" per frasi come "un aperitivo estivo", "la tua
+# estate", "un look estivo" — marketing sull'occasione, non sul capo — e
+# camicie trasversali venivano cosi' escluse da ogni outfit invernale. I
+# segnali sostanziali osservati ("fibra estiva", "filato estivo", "classica
+# maglietta estiva") hanno tutti la stessa forma: sostantivo di capo/tessuto
+# seguito dall'aggettivo.
+_NOME_DI_CAPO_O_TESSUTO = (
+    r"(?:capo|capi|tessut\w+|fibr\w+|filat\w+|magli\w+|camici\w+|"
+    r"pantalon\w+|giacc\w+|giubbott\w+|felp\w+|modell\w+|version\w+|variant\w+)"
+)
+STAGIONE_ESTIVA_DEL_CAPO = re.compile(_NOME_DI_CAPO_O_TESSUTO + r"\s+estiv")
+STAGIONE_INVERNALE_DEL_CAPO = re.compile(_NOME_DI_CAPO_O_TESSUTO + r"\s+invernal")
+
+
 def season_da_tipo(title: str):
     """Stagione dedotta dal tipo di capo, o None se il capo non è stagionale.
 
@@ -714,6 +730,26 @@ def extract_metadata_from_soup(soup: BeautifulSoup, product_url: str) -> dict:
 # FASE 3: derive_attributes — applica le regole di tagging
 # =====================================================================
  
+# Parole di stile che restano affidabili anche dentro la prosa della scheda.
+#
+# Tutte le altre non lo sono, ed è misurato: la descrizione attiva in media 2,9
+# tag su 10 per capo, e 308 capi ne attivano 6 o più — nessun capo è insieme
+# elegante, streetwear, militare, minimal e workwear. Il motivo è che il copy
+# non descrive il capo ma l'occasione e gli abbinamenti: "abbinalo a un blazer
+# per un look impeccabile" faceva risultare eleganti 1382 capi (48% del
+# catalogo), fra cui tre pantaloni della tuta su sei esempi. Lo stesso bermuda
+# G-STAR compariva come esempio per sei tag diversi.
+#
+# Queste invece nominano una tecnica costruttiva o un trattamento del tessuto:
+# sono fatti verificabili, non aggettivi, e per giunta dicono cose che una foto
+# NON può vedere — che è esattamente ciò che al testo resta da fare ora che la
+# revisione visiva copre il registro stilistico di tutto il catalogo.
+PAROLE_TECNICHE_AFFIDABILI = {
+    "impermeabile", "membrana", "idrorepellente", "antivento",
+    "trekking", "camouflage", "mimetico",
+}
+
+
 def compute_style_scores(metadata: dict) -> dict:
     """Punteggio grezzo (non sogliato) per ognuno dei 10 style_tags.
 
@@ -733,7 +769,10 @@ def compute_style_scores(metadata: dict) -> dict:
     text_matched_tags = set()  # tag con supporto esplicito da description_text/title
 
     for tag, keywords in STYLE_KEYWORDS.items():
-        if any(kw in combined_text for kw in keywords):
+        # dal titolo qualunque parola vale: lì la parola NOMINA il capo.
+        # dalla prosa solo i fatti tecnici (vedi PAROLE_TECNICHE_AFFIDABILI).
+        if any(kw in title for kw in keywords) or any(
+                kw in desc for kw in keywords if kw in PAROLE_TECNICHE_AFFIDABILI):
             scores[tag] += 0.8
             text_matched_tags.add(tag)
 
@@ -820,9 +859,9 @@ def derive_attributes(metadata: dict, category_path: Path) -> dict:
     # lasciarla in "tutte" la rendeva abbinabile a una t-shirt estiva.
     season = season_da_tipo(metadata.get("title"))
     if season is None:
-        if any(w in combined_text for w in ["estate", "estivo", "estiva"]):
+        if STAGIONE_ESTIVA_DEL_CAPO.search(combined_text):
             season = "estate"
-        elif any(w in combined_text for w in ["inverno", "invernale"]):
+        elif STAGIONE_INVERNALE_DEL_CAPO.search(combined_text):
             season = "inverno"
         elif "mezza stagione" in combined_text:
             season = "mezza_stagione"
@@ -1118,6 +1157,102 @@ def refix_brand_and_attributes(output: str) -> dict:
 
     print(f"\n[OK] Brand corretto per {changed_brand}/{len(meta_paths)} prodotti.", flush=True)
     return {"totale": len(meta_paths), "brand_corretti": changed_brand}
+
+
+# =====================================================================
+# Descrizione completa dalla pagina prodotto
+# =====================================================================
+#
+# og:description — l'unica cosa che salvavamo — e' una versione accorciata e
+# incoerente: su 2901 schede solo il 21% conservava la sezione "Come abbinarla?"
+# e il 32% il blocco tecnico. La pagina invece ha entrambi, in due contenitori
+# distinti, e nella parte discorsiva ci sono LINK alle categorie dei capi da
+# abbinare — che non sono prosa da interpretare ma puntatori mappabili sugli
+# slot dell'outfit.
+
+SELETTORI_DESCRIZIONE = ("#product-info-short-description", ".wrapper-short-description")
+SELETTORI_SCHEDA = ("#description", ".product.attribute.description")
+
+
+def _testo_da(soup, selettori) -> str:
+    for sel in selettori:
+        el = soup.select_one(sel)
+        if el:
+            testo = el.get_text("\n", strip=True)
+            if testo:
+                return testo
+    return ""
+
+
+def estrai_descrizione_completa(soup, product_url: str) -> dict:
+    """Descrizione discorsiva, scheda tecnica e link di abbinamento."""
+    contenitore = None
+    for sel in SELETTORI_DESCRIZIONE:
+        contenitore = soup.select_one(sel)
+        if contenitore:
+            break
+
+    abbinamenti = []
+    if contenitore:
+        for a in contenitore.find_all("a", href=True):
+            href = urljoin(product_url, a["href"])
+            if "/coordinati" in href:
+                continue  # rimando generico agli outfit del sito, non un capo
+            abbinamenti.append({"testo": a.get_text(strip=True), "categoria_url": href})
+
+    return {
+        "descrizione_completa": _testo_da(soup, SELETTORI_DESCRIZIONE),
+        "scheda_tecnica": _testo_da(soup, SELETTORI_SCHEDA),
+        "abbinamenti_suggeriti": abbinamenti,
+    }
+
+
+def scarica_descrizioni(output: str, delay: float = 0.7, progress_file: str = None,
+                        max_products: int = None, riparti: bool = False) -> dict:
+    """Rivisita ogni pagina prodotto e allega la descrizione completa al suo
+    metadata.json, senza toccare foto ne' attributi.
+
+    Riprendibile: i capi che hanno gia' 'descrizione_completa' si saltano, a
+    meno di riparti=True. I campi vecchi (description_text) restano dove sono:
+    servono ancora a chi legge la scheda accorciata, e sovrascriverli
+    renderebbe impossibile confrontare le due versioni.
+    """
+    output_dir = Path(output)
+    meta_paths = sorted(output_dir.rglob("metadata.json"))
+    da_fare = []
+    for mp in meta_paths:
+        m = json.loads(mp.read_text(encoding="utf-8"))
+        if not m.get("url"):
+            continue
+        if riparti or "descrizione_completa" not in m:
+            da_fare.append(mp)
+    if max_products:
+        da_fare = da_fare[:max_products]
+    print(f"[*] {len(da_fare)} schede da scaricare (su {len(meta_paths)} prodotti)", flush=True)
+
+    session = get_session()
+    fatti = errori = con_abbinamenti = 0
+    for i, mp in enumerate(da_fare, 1):
+        m = json.loads(mp.read_text(encoding="utf-8"))
+        soup, err = fetch_product_page(session, m["url"])
+        if soup is None:
+            errori += 1
+            print(f"  [{i}/{len(da_fare)}] ERRORE {m.get('relpath','?')[:46]}: {err}", flush=True)
+            time.sleep(delay)
+            continue
+        m.update(estrai_descrizione_completa(soup, m["url"]))
+        mp.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
+        fatti += 1
+        if m["abbinamenti_suggeriti"]:
+            con_abbinamenti += 1
+        if i % 100 == 0 or i == len(da_fare):
+            print(f"  [{i}/{len(da_fare)}] {fatti} scaricate, {con_abbinamenti} con abbinamenti, "
+                  f"{errori} errori", flush=True)
+        time.sleep(delay)
+
+    print(f"\n[OK] {fatti} descrizioni allegate, {con_abbinamenti} con link di abbinamento, "
+          f"{errori} errori", flush=True)
+    return {"scaricate": fatti, "con_abbinamenti": con_abbinamenti, "errori": errori}
 
 
 def rebuild_catalog(output: str) -> str:

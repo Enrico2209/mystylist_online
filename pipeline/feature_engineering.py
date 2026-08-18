@@ -200,17 +200,69 @@ def dominant_colors_lab(image_path: Path, n_colors: int = N_COLOR_CLUSTERS) -> d
 # Vettore stile (multi-hot style_tags + formalità normalizzata + stagione)
 # =====================================================================
 
+# Peso del punteggio visivo nella scala dei punteggi grezzi di
+# compute_style_scores, dove un riscontro testuale vale 0.8. La revisione
+# visiva guarda il capo, non le parole che lo accompagnano: un tag pieno
+# (1.0) vale 2.4, cioè tre riscontri testuali — abbastanza da dare al capo
+# una norma sopra la mediana del catalogo (0.55) e quindi piena confidenza
+# in style_match, che è esattamente ciò che la revisione deve comprare.
+VISION_STYLE_WEIGHT = 2.4
+
+
+def needs_review_effettivo(metadata: dict) -> bool:
+    """La quarantena vale finché non c'è una revisione visiva riuscita.
+
+    Il flag testuale needs_vision_review resta com'è (è la diagnosi:
+    "il testo non dice nulla"); qui si decide la prognosi: se Gemini ha
+    visto la foto e ha risposto, il capo torna abbinabile.
+    """
+    if not metadata.get("needs_vision_review"):
+        return False
+    revisione = metadata.get("vision_review") or {}
+    return not revisione.get("style_scores")
+
+
+# La revisione fatta sotto la guida attuale. Il controllo sulla fonte non e'
+# pedanteria: i giudizi precedenti nascevano da un prompt che non aveva ne' la
+# descrizione completa ne' il procedimento sulla formalita', e divergevano dal
+# testo di almeno un livello nel 35% dei capi. Finche' un capo non e' stato
+# rivisto sotto la guida nuova, la sua formalita' resta quella testuale.
+FONTE_GUIDA = "foto+descrizione"
+
+
+def formalita_effettiva(metadata: dict):
+    """La formalita' da usare: quella di Gemini se disponibile, altrimenti quella
+    delle regole testuali.
+
+    Le regole testuali pesavano per meta' su una parola del titolo, che descrive
+    la FORMA del capo e non il registro — "giacca" vale sia per un blazer sia per
+    un antivento K-Way. I tetti di brand esistevano solo per rattoppare questo,
+    marchio per marchio. Gemini vede foto, composizione e descrizione insieme, e
+    il procedimento di quelle regole ce l'ha scritto nella guida.
+    """
+    revisione = metadata.get("vision_review") or {}
+    if revisione.get("fonte") == FONTE_GUIDA:
+        f = revisione.get("formality")
+        if isinstance(f, (int, float)) and 1 <= f <= 5:
+            return int(f)
+    return metadata.get("formality_score")
+
+
 def build_style_vector(metadata: dict) -> dict:
     # punteggi grezzi (non sogliati) ricalcolati dal testo già in metadata.json —
     # metadata["style_tags"] è invece filtrato a soglia 0.5 in Fase 2 (badge per
     # needs_vision_review) e azzererebbe segnale reale sotto soglia se usato qui
     raw_scores, _text_matched_tags = compute_style_scores(metadata)
+    revisione = metadata.get("vision_review") or {}
+    for tag, punteggio in (revisione.get("style_scores") or {}).items():
+        if tag in raw_scores:
+            raw_scores[tag] += VISION_STYLE_WEIGHT * float(punteggio)
     tag_values = {
         f"style_{tag}": min(raw_scores.get(tag, 0.0), STYLE_SCORE_CAP) / STYLE_SCORE_CAP
         for tag in STYLE_TAGS
     }
 
-    formality = metadata.get("formality_score")
+    formality = formalita_effettiva(metadata)
     formality_norm = (formality - 1) / 4 if formality is not None else 0.5
 
     season = metadata.get("season") or "tutte"
@@ -268,7 +320,7 @@ def build_feature_table(root: str, out_parquet: str = None, limit: int = None) -
             "url": metadata.get("url"),
             "brand_slug": metadata.get("brand_slug"),
             "title": metadata.get("title"),
-            "needs_vision_review": metadata.get("needs_vision_review"),
+            "needs_vision_review": needs_review_effettivo(metadata),
             "representative_image": str(rep_image.relative_to(root_dir)),
             "L": color["dominant_lab"][0],
             "a": color["dominant_lab"][1],
@@ -308,7 +360,7 @@ def recompute_style_vectors(features_parquet: str, root: str, out_parquet: str =
         for col, val in build_style_vector(metadata).items():
             df.loc[relpath, col] = val
         df.loc[relpath, "brand_slug"] = metadata.get("brand_slug")
-        df.loc[relpath, "needs_vision_review"] = metadata.get("needs_vision_review")
+        df.loc[relpath, "needs_vision_review"] = needs_review_effettivo(metadata)
 
     df = df.reset_index()
 
@@ -316,6 +368,64 @@ def recompute_style_vectors(features_parquet: str, root: str, out_parquet: str =
         df.to_parquet(out_parquet, index=False)
         print(f"[OK] Salvato {len(df)} prodotti in {out_parquet}", flush=True)
 
+    return df
+
+
+IDF_FILE = Path(__file__).resolve().parent / "style_idf.json"
+
+
+def applica_idf(features_parquet: str, out_parquet: str = None) -> pd.DataFrame:
+    """Ripesa i 10 tag di stile per quanto sono RARI nel catalogo.
+
+    Serve perché la revisione visiva ha un fortissimo tono di fondo: Gemini
+    assegna "casual" al 96% dei capi e lo fa dominante nel 57%. Un tag che
+    quasi tutti hanno non distingue niente — e finché pesava come gli altri
+    schiacciava lo spazio: il coseno fra due capi a caso saliva a 0,71 (tutto
+    somigliava a tutto) e HDBSCAN produceva un cluster solo da 1548 capi con
+    intorno il 78% di outlier.
+
+    Il peso è l'IDF classico, log(1/prevalenza): "casual" (96%) scende a 0,04,
+    "military" o "outdoor_tecnico" (5%) salgono a ~3. Condividere un tratto
+    raro è prova di somiglianza molto più forte che condividerne uno comune.
+    Dopo la ripesatura il coseno mediano torna a 0,28 e i cluster a 25, con il
+    più grande al 17% del catalogo.
+
+    I pesi si ricalcolano dal catalogo corrente e si salvano in style_idf.json,
+    così si può leggere quanto vale ogni tag senza rieseguire nulla. Va
+    rilanciata dopo ogni cambio ai vettori di stile, PRIMA del clustering.
+    formality_norm e le colonne di stagione non si toccano: non sono tag.
+    """
+    df = pd.read_parquet(features_parquet)
+    colonne = [f"style_{t}" for t in STYLE_TAGS]
+    prevalenza = (df[colonne] > 0).mean(axis=0)
+    # la prevalenza si stima sui valori GIÀ ripesati se si rilancia due volte:
+    # per questo il file dei pesi è la fonte di verità e si riparte dal grezzo
+    # Radice dell'IDF, non IDF pieno. Misurato su coppie di capi già giudicate
+    # a mano (felpa NASA + jeans, + K-Way, + Saucony come BUONE; blazer o
+    # camicia + tuta, mocassino + t-shirt come CATTIVE), lo stacco fra le due
+    # famiglie disegna una U rovesciata con il massimo a esponente 0,5:
+    #     esponente 0.00 -> buone 0.623, cattive 0.637  (stacco -0.014!)
+    #     esponente 0.50 -> buone 0.363, cattive 0.268  (stacco +0.095)
+    #     esponente 1.00 -> buone 0.187, cattive 0.179  (stacco +0.007)
+    # I due estremi sbagliano per motivi opposti e simmetrici: senza pesi il
+    # tono di fondo "casual" rende tutto simile a tutto (e le coppie sbagliate
+    # scorano perfino PIÙ alte delle giuste); con l'IDF pieno condividere un
+    # tratto comune non vale più niente, ma due capi entrambi casual stanno
+    # insieme davvero — la compatibilità non è solo distintività.
+    ESPONENTE_IDF = 0.5
+    pesi = np.log(1.0 / prevalenza.clip(lower=1e-3)) ** ESPONENTE_IDF
+    df[colonne] = df[colonne].to_numpy(float) * pesi.to_numpy(float)
+
+    IDF_FILE.write_text(json.dumps(
+        {t: round(float(w), 4) for t, w in zip(colonne, pesi)}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+    print("[*] pesi IDF (tag piu' raro = piu' pesante):", flush=True)
+    for t, w in sorted(zip(colonne, pesi), key=lambda kv: -kv[1]):
+        print(f"      {t.replace('style_',''):18s} prevalenza {prevalenza[t]*100:5.1f}%  peso {w:.2f}", flush=True)
+
+    if out_parquet:
+        df.to_parquet(out_parquet, index=False)
+        print(f"[OK] Salvato {len(df)} prodotti in {out_parquet}", flush=True)
     return df
 
 

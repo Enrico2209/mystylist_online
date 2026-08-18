@@ -64,16 +64,57 @@ HUE_SPLIT_COMPLEMENTARY = 100.0
 
 # Due colori entrambi scuri che differiscono solo per sottotono — il caso
 # nero + blu notte — stonano come due blu leggermente diversi: la differenza
-# si legge come errore di illuminazione, non come scelta. Sotto queste soglie
-# il bonus "neutro" non si applica.
-DARK_L_MAX = 40.0        # oltre questa luminosità il colore non è più "scuro"
-DARK_L_DELTA = 25.0      # con più contrasto di così la coppia si legge bene
-UNDERTONE_CHROMA = 5.0   # croma minima perché il sottotono sia percepibile
+# si legge come errore di illuminazione, non come scelta.
+#
+# Perché sia uno stono servono due cose insieme, ed entrambe sono questioni di
+# grado, non interruttori: i due devono essere abbastanza vicini di luminosità
+# da sembrare voler essere lo stesso colore, e il sottotono che li separa deve
+# vedersi. La versione precedente le trattava come sì/no e chiedeva la cosa
+# sbagliata sulla seconda — la croma di UNO dei due invece della distanza FRA i
+# due — con l'effetto che due giubbotti blu notte identici all'occhio, croma
+# 4,57 e 5,27, prendevano 0,744 e 0,300 contro la stessa felpa nera.
+DARK_L_MAX = 40.0             # oltre questa luminosità il colore non è più "scuro"
+DARK_L_SIMILE = 12.0          # sotto questo stacco i due sembrano voler essere lo stesso colore
+DARK_L_DELTA = 25.0           # oltre questo stacco la coppia si legge come scelta, non errore
+UNDERTONE_DELTA_MIN = 4.0     # distanza cromatica sotto cui il sottotono non si vede
+UNDERTONE_DELTA_PIENO = 12.0  # ...e sopra cui si vede senza dubbi
+STONO_SCURI = 0.30            # il verdetto pieno, quando entrambe le condizioni sono al massimo
 
 
 def hue_circular_distance(h1: float, h2: float) -> float:
     d = abs(h1 - h2) % 360
     return min(d, 360 - d)
+
+
+def stono_da_sottotono(La, Lb, aa, ba, ab, bb) -> float:
+    """Quanto la coppia di scuri è il caso nero+blu notte, da 0 (per niente) a
+    1 (in pieno). Continua e non a gradini: la differenza fra due capi che si
+    somigliano non deve dipendere da quale lato di una soglia cadono.
+
+    Due fattori, moltiplicati perché servono entrambi:
+      - quanto si vede il sottotono: la distanza cromatica FRA i due colori,
+        cioè la distanza nel piano a-b. Non la croma di uno solo: due blu
+        notte con la stessa identica tinta hanno croma alta ed è comunque un
+        monocromatico, non uno sbaglio.
+      - quanto sembra voluto: se i due hanno quasi la stessa luminosità
+        l'occhio li legge come un tentativo di abbinare fallito; man mano che
+        lo stacco cresce la coppia si legge come due profondità scelte apposta.
+    """
+    if max(La, Lb) >= DARK_L_MAX:
+        return 0.0
+    stacco_luce = abs(La - Lb)
+    if stacco_luce >= DARK_L_DELTA:
+        return 0.0
+
+    distanza_cromatica = math.hypot(aa - ab, ba - bb)
+    si_vede = (distanza_cromatica - UNDERTONE_DELTA_MIN) / (UNDERTONE_DELTA_PIENO - UNDERTONE_DELTA_MIN)
+    si_vede = min(1.0, max(0.0, si_vede))
+
+    if stacco_luce <= DARK_L_SIMILE:
+        sembra_voluto = 1.0
+    else:
+        sembra_voluto = (DARK_L_DELTA - stacco_luce) / (DARK_L_DELTA - DARK_L_SIMILE)
+    return si_vede * sembra_voluto
 
 
 def color_harmony_pair(lab_a, lab_b) -> float:
@@ -114,18 +155,17 @@ def color_harmony_pair(lab_a, lab_b) -> float:
     if min_chroma >= NEUTRAL_CHROMA:
         return hue_score
 
+    neutral_weight = 1 - (min_chroma / NEUTRAL_CHROMA)
+    bonus_neutro = neutral_weight * 0.90 + (1 - neutral_weight) * hue_score
+
     # Eccezione al bonus neutro: due scuri che si distinguono solo per il
     # sottotono. È il nero con il blu notte — il colore neutro c'è (croma ~0)
     # ma non "assorbe" nulla, perché senza stacco di luminosità l'occhio legge
     # solo la differenza di sottotono, e la legge come sbaglio. Lo stesso caso
     # fra due colori saturi è già penalizzato sopra a 0,25; senza questa
     # eccezione il bonus neutro lo premiava invece a 0,90.
-    if (max(La, Lb) < DARK_L_MAX and abs(La - Lb) < DARK_L_DELTA
-            and max(Ca, Cb) >= UNDERTONE_CHROMA):
-        return 0.30
-
-    neutral_weight = 1 - (min_chroma / NEUTRAL_CHROMA)
-    return neutral_weight * 0.90 + (1 - neutral_weight) * hue_score
+    stono = stono_da_sottotono(La, Lb, aa, ba, ab_, bb)
+    return (1 - stono) * bonus_neutro + stono * STONO_SCURI
 
 
 # Sotto questo valore, color_harmony_pair sta segnalando uno stono vero e
@@ -164,12 +204,27 @@ def color_harmony(palette_a, palette_b, top_k: int = 2) -> float:
     return total_score / total_weight if total_weight > 0 else 0.5
 
 
-REFERENCE_STYLE_NORM = 0.55  # ~mediana della norma dei vettori stile nel catalogo (vedi analisi)
+# Soglia di norma sotto cui un capo è considerato "poco caratterizzato":
+# per disegno è la mediana della norma dei vettori stile nel catalogo, così
+# circa metà dei capi riceve un po' di smorzamento (vedi style_match).
+#
+# Rimisurata dopo la revisione visiva su tutti i 2901 capi e la ripesatura
+# radice-IDF: 0.687 (era 0.574 sui soli vettori testuali). Il significato è
+# cambiato in meglio: prima norma bassa voleva dire "scheda muta, non
+# sappiamo cosa sia"; ora vuol dire "ha solo tratti comuni a tutti", perché
+# i tag rari pesano di più. Resta giusto smorzare: di un capo che è solo
+# genericamente casual sappiamo davvero poco di distintivo.
+REFERENCE_STYLE_NORM = 0.69
 
 # Coseno mediano fra due capi presi a caso nel catalogo: è, alla lettera, il
 # valore di "non ne so niente". Verso questo si smorza un capo dal segnale
 # debole, invece che verso zero (vedi style_match).
-COSENO_NEUTRO = 0.60
+#
+# Rimisurato su 20.000 coppie dopo revisione visiva e radice-IDF: 0.401
+# (era 0.60 sui soli vettori testuali). Senza la ripesatura sarebbe stato
+# 0.71, perché il tono di fondo "casual" della visione — presente sul 96% dei
+# capi — rendeva tutto simile a tutto.
+COSENO_NEUTRO = 0.40
 
 
 def style_match(style_vec_a, style_vec_b, formality_a: float, formality_b: float,

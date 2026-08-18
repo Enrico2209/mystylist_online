@@ -75,8 +75,8 @@ GARMENT_TYPE_KEYWORDS = {
     "bottom": ["pantalone", "pantaloni", "jeans", "bermuda", "short", "shorts", "gonna",
                "leggings", "pantaloncini"],
     "outerwear": ["giacca", "giacche", "giubbotto", "giubbotti", "cappotto", "piumino",
-                  "bomber", "parka", "trench", "blazer", "gilet", "tracktop", "anorak",
-                  "jkt", "windbreaker", "giaccone"],
+                  "bomber", "parka", "trench", "blazer", "gilet", "smanicato", "tracktop",
+                  "anorak", "jkt", "windbreaker", "giaccone"],
     "shoes": ["scarpe", "scarpa", "sneakers", "sneaker", "stivaletto", "stivaletti",
               "mocassino", "mocassini", "sandali", "sandalo", "ciabatte", "stringate",
               "ballerine"],
@@ -89,7 +89,22 @@ GARMENT_TYPE_KEYWORDS = {
 
 MANDATORY_SLOTS = ["top", "bottom", "shoes"]
 OPTIONAL_SLOTS = ["outerwear", "accessory"]
-OPTIONAL_SLOT_MIN_SCORE = 0.5  # sotto questa soglia, meglio niente accessorio/outerwear che uno stonato
+# Sotto questa soglia, meglio niente accessorio/capospalla che uno stonato.
+# Allineata alla soglia di accettazione del pool (0.46 — riancorata per
+# percentile dopo la revisione visiva: vedi COSENO_NEUTRO in scoring.py, la
+# scala dei punteggi si è compressa verso il basso e 0.46 occupa oggi lo
+# stesso posto che 0.6 occupava prima): quando stava a 0.5 un
+# capo opzionale poteva trascinare l'outfit nella fascia 0.5-0.6, dove il pool
+# scarta l'outfit INTERO — il capo facoltativo, per definizione rinunciabile,
+# affondava anche i tre obbligatori che da soli sarebbero passati.
+OPTIONAL_SLOT_MIN_SCORE = 0.46
+# I candidati outlier (style_cluster=-1) per il capospalla non sono più
+# esclusi in blocco: il 70% dei capispalla eleggibili è outlier — non perché
+# stonino, ma perché la scheda di un giubbotto dice poco e HDBSCAN non li
+# aggrega — e l'esclusione concentrava 956 presenze su 34 giacche (la più
+# usata compariva 170 volte). Al posto del divieto, un'asticella più alta:
+# l'outlier entra solo se l'outfit resta comunque BUONO, non appena passabile.
+OPTIONAL_OUTLIER_MIN_SCORE = 0.60
 
 
 _KEYWORD_TO_SLOT = {kw: slot for slot, kws in GARMENT_TYPE_KEYWORDS.items() for kw in kws}
@@ -120,6 +135,31 @@ def _find_slot_and_keyword(title: str):
 def classify_slot(title: str):
     slot, _keyword = _find_slot_and_keyword(title)
     return slot
+
+
+# Ripiego sul percorso di categoria quando il titolo non nomina il tipo di
+# capo ("DREW PEAK CREW NF0A4SVR..."). Erano 165 capi invisibili alla
+# generazione; per 57 la categoria stava scritta nel percorso. Le chiavi sono
+# i segmenti reali del catalogo, confrontati per segmento intero — non come
+# sottostringhe, per non leggere "lacoste" dentro un percorso brand.
+_SEGMENTO_SLOT = {
+    "felpe": "top", "t-shirt": "top", "camicie": "top", "polo": "top",
+    "maglieria": "top", "canotte": "top",
+    "pantaloni": "bottom", "jeans": "bottom", "bermuda": "bottom",
+    "giubbotti": "outerwear", "giubbotti-donna": "outerwear", "gilet": "outerwear",
+    "scarpe": "shoes", "scarpe-donna": "shoes", "sneakers": "shoes",
+    "stivaletti": "shoes", "sandali": "shoes",
+    "calzini-uomo": "accessory", "calzini": "accessory", "borse": "accessory",
+    "sciarpe": "accessory", "occhiali": "accessory", "cappelli": "accessory",
+    "cinture": "accessory",
+}
+
+
+def slot_da_percorso(relpath: str):
+    for segmento in (relpath or "").lower().split("/"):
+        if segmento in _SEGMENTO_SLOT:
+            return _SEGMENTO_SLOT[segmento]
+    return None
 
 
 SHORT_SLEEVE_KEYWORDS = {"t-shirt", "tshirt", "polo", "canotta", "canotte", "maglietta", "top"}
@@ -294,9 +334,15 @@ ACCESSORI_MASCHILI = r"\b(borsa|borse|tracolla|tracolle|marsupio|marsupi)\b"
 
 def classify_gender(title: str, relpath: str):
     t = (title or "").lower()
-    if re.search(r"\bdonna\b", t):
+    # Confine di parola solo in coda: il catalogo scrive il brand attaccato al
+    # genere ("CAMICIA ICHIDONNA IHESTAMA"), e con \bdonna\b quel capo restava
+    # senza genere — cioè jolly — e finiva negli outfit uomo. Otto capi ICHI
+    # erano in questo stato; uno, un chino donna, era in un outfit uomo con
+    # polo e mocassini. Nessun titolo del catalogo contiene parole che
+    # finiscono in -donna o -uomo con un altro significato (misurato).
+    if re.search(r"donna\b", t):
         return "donna"
-    if re.search(r"\buomo\b", t):
+    if re.search(r"uomo\b", t):
         return "uomo"
     # fallback sul percorso di categoria, meno affidabile del titolo
     if "abbigliamento-donna" in (relpath or ""):
@@ -325,6 +371,9 @@ def load_and_prepare(features_parquet: str) -> pd.DataFrame:
     dedotte dal titolo/percorso, vedi sopra)."""
     df = pd.read_parquet(features_parquet)
     df["slot"] = df["title"].apply(classify_slot)
+    # titolo muto -> si guarda il percorso di categoria (vedi slot_da_percorso)
+    manca = df["slot"].isna()
+    df.loc[manca, "slot"] = df.loc[manca, "relpath"].apply(slot_da_percorso)
     df["gender"] = df.apply(lambda r: classify_gender(r["title"], r["relpath"]), axis=1)
     df["season"] = df.apply(_season_label, axis=1)
     df["sleeve"] = df.apply(lambda r: classify_sleeve(r["title"], r["relpath"]), axis=1)
@@ -580,33 +629,47 @@ def build_outfit(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w
         new_beam.sort(key=lambda t: t[2], reverse=True)
         beam = [(items, used) for items, used, _ in new_beam[:beam_width]]
 
-    # slot obbligatori riempiti: proviamo ad aggiungere quelli opzionali al miglior candidato del beam
-    best_items, best_used = beam[0]
+    # Slot obbligatori riempiti. Gli opzionali si provano su TUTTE le
+    # combinazioni rimaste nel beam, non solo sulla prima.
+    #
+    # Prima si prendeva beam[0] e si buttava il resto: la ricerca era larga 5
+    # fino al terzetto e diventava larga 1 esattamente dove restavano ancora
+    # due decisioni da prendere. Ma quale terzetto regga meglio un capospalla
+    # non si sa finché non lo si prova, e il terzetto in testa spesso non è
+    # quello che vince alla fine. Misurato sulla felpa NASA: il terzetto in
+    # testa (0,781) finiva a 0,728, il secondo (0,770) sarebbe finito a 0,754
+    # — e quel secondo veniva scartato senza mai essere provato.
+    def _completa(items, used):
+        for slot in OPTIONAL_SLOTS:
+            if slot == "outerwear" and not _outerwear_allowed(items):
+                continue  # Regola 2: niente giacca/outerwear sui pantaloncini
+            # Gli outlier di cluster sono ammessi anche qui (vedi
+            # OPTIONAL_OUTLIER_MIN_SCORE): il vincolo di formalità e
+            # l'asticella più alta fanno il lavoro che prima faceva il
+            # divieto, senza congelare il 70% dei capispalla fuori da ogni
+            # outfit.
+            candidates = candidates_for_slot(df, slot, anchor, used,
+                                              current_items=items)
+            if candidates.empty:
+                continue
+            candidates = candidates.copy()
+            candidates["_score"] = candidates.apply(
+                lambda r: _min_pairwise(items + [(slot, r)]), axis=1
+            )
+            # Ognuno con la propria asticella, PRIMA di scegliere il migliore:
+            # altrimenti un outlier a 0.65 (bocciato) nasconderebbe un capo di
+            # cluster a 0.62 (promosso) solo per avere il punteggio più alto.
+            soglie = candidates["style_cluster"].apply(
+                lambda c: OPTIONAL_OUTLIER_MIN_SCORE if c == -1 else OPTIONAL_SLOT_MIN_SCORE)
+            ammessi = candidates[candidates["_score"] >= soglie]
+            if not ammessi.empty:
+                best_candidate = ammessi.loc[ammessi["_score"].idxmax()]
+                items = items + [(slot, best_candidate)]
+                used = used | {best_candidate["relpath"]}
+        return items
 
-    for slot in OPTIONAL_SLOTS:
-        if slot == "outerwear" and not _outerwear_allowed(best_items):
-            continue  # Regola 2: niente giacca/outerwear sui pantaloncini
-        # Il cluster reale resta obbligatorio per il capospalla, dove un pezzo
-        # stonato pesa su tutta la figura. Per gli accessori no: il 68% è
-        # outlier — non perché sia sbagliato, ma perché borse e zaini hanno un
-        # vettore di stile poco denso — e pretendere il cluster li escludeva in
-        # blocco, comprese le borse street che devono poter comparire sugli
-        # outfit street. A trattenere i pezzi fuori registro basta ora il
-        # vincolo di formalità, che dopo la correzione del prior discrimina
-        # davvero (prima due terzi del catalogo stavano sullo stesso valore).
-        candidates = candidates_for_slot(df, slot, anchor, best_used,
-                                          require_real_cluster=(slot == "outerwear"),
-                                          current_items=best_items)
-        if candidates.empty:
-            continue
-        candidates = candidates.copy()
-        candidates["_score"] = candidates.apply(
-            lambda r: _min_pairwise(best_items + [(slot, r)]), axis=1
-        )
-        best_candidate = candidates.loc[candidates["_score"].idxmax()]
-        if best_candidate["_score"] >= OPTIONAL_SLOT_MIN_SCORE:
-            best_items = best_items + [(slot, best_candidate)]
-            best_used = best_used | {best_candidate["relpath"]}
+    completi = [_completa(items, used) for items, used in beam]
+    best_items = max(completi, key=_min_pairwise)
 
     # punteggi pairwise finali, per trasparenza/debug
     pairwise_scores = {}
@@ -633,7 +696,7 @@ def build_outfit(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w
 
 
 def generate_outfits(df: pd.DataFrame, n_outfits: int = 10, anchor_slot: str = "top",
-                      min_score: float = 0.6, w_colore: float = 0.5, w_stile: float = 0.5,
+                      min_score: float = 0.46, w_colore: float = 0.5, w_stile: float = 0.5,
                       beam_width: int = 5, candidates_per_step: int = 30) -> list:
     """Genera outfit iterando i capi ancora dello slot indicato in ordine
     deterministico (per relpath — categoria/sottocategoria/slug), non via
@@ -720,7 +783,7 @@ def _build_outfit_label(gender, slots: dict) -> str:
     return f"Outfit {gender_label}: " + " + ".join(parts)
 
 
-def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.6,
+def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.46,
                          w_colore: float = 0.5, w_stile: float = 0.5,
                          beam_width: int = 5, candidates_per_step: int = 30) -> dict:
     """Genera l'intero pool di outfit scansionando OGNI slot obbligatorio
