@@ -37,61 +37,14 @@ import scoring as sc
 
 # la soglia non è cablata: segue quella del pool (vedi run_outfit_pipeline)
 SOGLIA = og.OPTIONAL_SLOT_MIN_SCORE
+# valida() vive in outfit_generation: la usa anche l'accumulo del pool
+valida = og.valida_composizione
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, RADICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 POOL = BASE / "outfits_pool.jsonl"
 IMMAGINI = BASE / "outfit_images"
 MINIATURE = BASE / "outfit_thumbs"
-
-
-def valida(o: dict, df) -> tuple:
-    """(score, None) se la composizione passa le regole attuali, altrimenti
-    (score, motivo). Replica i vincoli di candidates_for_slot su un outfit
-    già composto."""
-    items = []
-    for s, v in o["slots"].items():
-        if not v:
-            continue
-        if v["relpath"] not in df.index:
-            return None, "capo sparito dal catalogo"
-        items.append((s, df.loc[v["relpath"]]))
-    rows = dict(items)
-
-    if any(r["needs_vision_review"] for _, r in items):
-        return None, "needs_vision_review"
-
-    coppie = {}
-    for (sa, a), (sb, b) in itertools.combinations(items, 2):
-        coppie[f"{sa}-{sb}"] = sc.score_pair(a, b)["score"]
-    m = min(coppie.values())
-    if m < SOGLIA:
-        return m, f"score sotto {SOGLIA}"
-
-    generi = {r["gender"] for _, r in items} - {None}
-    if len(generi) > 1:
-        return m, "genere misto"
-    for (_, a), (_, b) in itertools.combinations(items, 2):
-        if not (a["season"] == "tutte" or b["season"] == "tutte" or a["season"] == b["season"]):
-            return m, f"stagioni {a['season']}/{b['season']}"
-    fs = [r["formality_norm"] for _, r in items]
-    if max(fs) - min(fs) > og.FORMALITY_SPREAD_MAX:
-        return m, "dispersione formalita'"
-
-    top, bot, ow, sh = (rows.get(k) for k in ("top", "bottom", "outerwear", "shoes"))
-    if bot is not None and bot["leg_length"] == "corta":
-        if top is not None and top["sleeve"] != "corta":
-            return m, "R1 maniche lunghe su shorts"
-        if ow is not None:
-            return m, "R2 giacca su shorts"
-    if any(r["season"] == "inverno" for _, r in items) and (
-            (bot is not None and bot["leg_length"] == "corta")
-            or (top is not None and top["sleeve"] == "corta")):
-        return m, "R1 capo invernale su pelle scoperta"
-    if sh is not None and sh["mocassino"] and top is not None and top["top_senza_collo"]:
-        return m, "R3 mocassino su top senza collo"
-    if ow is not None and ow["cappotto"] and bot is not None and bot["bottom_da_tuta"]:
-        return m, "R4 cappotto su tuta"
-    return m, None
+MINIATURE_SUPERATE = RADICE / "outfit_thumbs_superate"
 
 
 def main():
@@ -103,14 +56,48 @@ def main():
     pool = [json.loads(l) for l in open(POOL, encoding="utf-8")]
     nel_pool = {o["outfit_id"] for o in pool}
 
+    # I pool storici sono la sola memoria di come era composto un outfit di cui
+    # resta solo l'immagine. Dopo la riorganizzazione del 19 agosto il pool vivo
+    # sta in nuvolari_db ma i .bak sono rimasti in radice: si guardano entrambi,
+    # altrimenti ogni orfana risulta "composizione ignota".
     composizioni = {}
-    for f in sorted(glob.glob(str(BASE / "outfits_pool.jsonl*"))):
+    sorgenti = sorted(glob.glob(str(BASE / "outfits_pool.jsonl*"))
+                      + glob.glob(str(RADICE / "outfits_pool.jsonl*")))
+    for f in sorgenti:
         for l in open(f, encoding="utf-8"):
             o = json.loads(l)
             composizioni.setdefault(o["outfit_id"], o)
 
+    # Ultima fonte: il manifest delle immagini. Descrive gli stessi outfit con
+    # nomi di campo diversi (capi/cartella/titolo invece di slots/relpath/title)
+    # e sopravvive ai pool che sono stati sovrascritti senza .bak. Vale solo per
+    # gli outfit_id che i pool non hanno gia' spiegato.
+    manifest = BASE / "outfits_manifest.json"
+    if manifest.exists():
+        for o in json.load(open(manifest, encoding="utf-8")).get("outfit", []):
+            if o["outfit_id"] in composizioni:
+                continue
+            # Tutti gli slot, anche i vuoti a None: e' la forma che ha il pool
+            # (vedi _serialize_slots). Filtrandoli via, la chiave spariva del
+            # tutto e l'audit del manifest segnalava 47 outfit come "capi
+            # diversi dal pool" -- differenza di forma, non di contenuto, ma
+            # rendeva il pool incoerente con se' stesso.
+            slots = {s: None for s in og.MANDATORY_SLOTS + og.OPTIONAL_SLOTS}
+            slots.update({s: {"product_id": c["product_id"],
+                              "relpath": c["cartella"],
+                              "title": c["titolo"],
+                              "url": c["url_prodotto"],
+                              "display_image": c["foto_copertina"],
+                              "all_images": c.get("foto_disponibili", [])}
+                          for s, c in o["capi"].items() if c})
+            composizioni[o["outfit_id"]] = {
+                "outfit_id": o["outfit_id"], "label": o["nome"],
+                "gender": o["genere"], "outfit_score": o["score_compatibilita"],
+                "anchor_slot": "top", "anchor_relpath": slots["top"]["relpath"],
+                "slots": slots, "pairwise_scores": o.get("score_coppie", {})}
+
     pagate = set()
-    for cartella in (IMMAGINI, BASE / "outfit_images_superate"):
+    for cartella in (IMMAGINI, IMMAGINI_SUPERATE):
         pagate |= {p.stem for p in cartella.glob("*.png")} if cartella.exists() else set()
     orfane = sorted(pagate - nel_pool)
     print(f"[*] immagini pagate: {len(pagate)}, fuori dal pool: {len(orfane)}")
@@ -148,10 +135,14 @@ def main():
             f.write(json.dumps(o, ensure_ascii=False) + "\n")
 
     # le immagini eventualmente finite fra le superate tornano operative
+    # Le cartelle _superate sono rimaste in radice dopo la riorganizzazione,
+    # mentre outfit_images/ e' in nuvolari_db: il percorso va preso da percorsi.py,
+    # non dedotto dal nome della cartella di destinazione.
     tornati = 0
     for o in ripescati:
-        for cartella, suff in ((IMMAGINI, ".png"), (MINIATURE, ".webp")):
-            sup = cartella.parent / f"{cartella.name}_superate" / f"{o['outfit_id']}{suff}"
+        for cartella, superate, suff in ((IMMAGINI, IMMAGINI_SUPERATE, ".png"),
+                                         (MINIATURE, MINIATURE_SUPERATE, ".webp")):
+            sup = superate / f"{o['outfit_id']}{suff}"
             if sup.exists():
                 shutil.move(str(sup), str(cartella / sup.name)); tornati += 1
     print(f"\n[OK] pool: {len(pool)} -> {len(pool) + len(ripescati)} outfit")

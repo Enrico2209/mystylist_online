@@ -21,7 +21,7 @@ import html
 import json
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 MANIFEST = BASE / "outfits_manifest.json"
 OUT = BASE / "galleria_outfit.html"
 

@@ -41,20 +41,19 @@ from google.genai import types
 
 from generate_outfit_images import load_api_key
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 CATALOGO = BASE / "nuvolari_full_organizzato"
 MODEL = "gemini-3.5-flash"
-FONTE = "foto+descrizione"   # marca la guida attuale; vedi --rifai
+FONTE = "foto+descrizione-5tag"   # marca la guida attuale; vedi --rifai
 LATO_MASSIMO = 640          # la foto serve a leggere lo stile, non i dettagli
 PAUSA = 0.3                 # fra le chiamate
 TENTATIVI = 3
 
 STYLE_TAGS = [
-    "elegante", "casual", "streetwear", "sportivo", "workwear",
-    "outdoor_tecnico", "vintage_prep", "minimal", "military", "boho_fantasia",
+    "sportivo", "casual", "elegante", "streetwear", "da_mare",
 ]
 
-GUIDA = BASE / "guida_classificazione.md"
+GUIDA = CODICE / "guida_classificazione.md"
 
 # La guida sta in un file a parte, non qui dentro: e' un documento di criteri
 # che si legge e si corregge come un testo (quando "casual" finisce di nuovo

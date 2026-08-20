@@ -29,7 +29,7 @@ import os
 import sys
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 UI_JSON = BASE / "outfits_ui.json"
 
 # Le foto non cambiano mai a parità di nome: un anno di cache è sicuro e

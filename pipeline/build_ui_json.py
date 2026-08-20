@@ -29,7 +29,7 @@ from pathlib import Path
 
 from generate_outfit_images import load_formality, outfit_formality
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 ROOT = BASE / "nuvolari_full_organizzato"
 JSONL = BASE / "outfits_pool.jsonl"
 IMG_DIR = BASE / "outfit_images"

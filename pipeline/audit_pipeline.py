@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 ROOT = BASE / "nuvolari_full_organizzato"
 
 esiti = []
@@ -232,7 +232,7 @@ info("capi non ammissibili", esclusi,
 # ══════════════════════════════════════════════════════════════════════
 blocco("GENERAZIONE IMMAGINI · configurazione")
 
-reg = BASE / "generation_rules.md"
+reg = CODICE / "generation_rules.md"
 ok("documento regole presente", int(reg.exists()), 1, f"{reg.stat().st_size} byte" if reg.exists() else "")
 
 import generate_outfit_images as gen
@@ -280,7 +280,7 @@ info("foto che partiranno verso l'API", f"{tot_inviate} ({tot_inviate/max(1,len(
 info("costo stimato del run completo",
      f"${len(pool) * 0.134 + tot_inviate * 261 * 2 / 1e6:.2f}",
      f"{len(pool)} immagini + token delle foto di riferimento")
-env = BASE / ".env"
+env = CODICE / ".env"
 if env.exists():
     import subprocess
     ignorato = subprocess.run(["git", "check-ignore", ".env"], cwd=BASE,

@@ -29,7 +29,7 @@ from generate_outfit_images import (MAX_REF_IMAGES, ROOT, load_formality,
                                      outfit_formality)
 from scoring import hue_circular_distance
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 
 
 def palette(df, relpath):

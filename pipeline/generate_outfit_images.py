@@ -32,7 +32,7 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 ROOT = BASE / "nuvolari_full_organizzato"
 JSONL = BASE / "outfits_pool.jsonl"
 OUT_DIR = BASE / "outfit_images"
@@ -51,7 +51,7 @@ SLOT_IT = {"top": "capo superiore", "bottom": "pantaloni", "shoes": "scarpe",
            "outerwear": "capospalla", "accessory": "accessorio"}
 MAX_SLOTS = len(SLOT_IT)   # capi al massimo in un outfit: soglia minima per max_ref
 
-RULES_FILE = BASE / "generation_rules.md"
+RULES_FILE = CODICE / "generation_rules.md"
 
 # Le regole comuni a tutte le immagini stanno in generation_rules.md, non qui:
 # si modificano senza toccare il codice e sono leggibili da chi non programma.
@@ -135,7 +135,7 @@ def load_api_key() -> str:
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if key:
         return key
-    env_file = BASE / ".env"
+    env_file = CODICE / ".env"
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()

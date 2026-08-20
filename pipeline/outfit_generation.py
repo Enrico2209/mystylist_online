@@ -59,7 +59,10 @@ Uso in notebook
 """
 
 import hashlib
+import collections
+import itertools
 import json
+import os
 import re
 from pathlib import Path
 
@@ -86,6 +89,62 @@ GARMENT_TYPE_KEYWORDS = {
     # fuori scope per la generazione a slot in questa v1, vedi nota sotto.
     "dress_or_suit": ["abito", "vestito", "tuta", "completo", "costume"],
 }
+
+# Quanti capi devono cambiare perche' due outfit contino come proposte diverse
+# e non come lo stesso outfit ritoccato. La distanza e' quanti capi di uno
+# mancano all'altro, presa nel verso peggiore: sostituire un pantalone vale 1,
+# e cosi' vale 1 anche aggiungere soltanto un cappello a un outfit esistente.
+# A 2 servono due capi cambiati davvero.
+#
+# A 1 (cioe' senza regola) il pool si riempiva di quasi-doppioni: il 76% delle
+# coppie generate dalla stessa ancora differiva di un capo solo su cinque, e
+# triplicare il pool aggiungeva 21 capi distinti su 2514.
+DISTANZA_MINIMA_VARIANTI = 2
+
+# Quanto due punteggi possono distare e contare ancora come pari merito nello
+# slot opzionale. A 0 si ruota solo fra punteggi identici al millesimo, quindi
+# la rotazione non costa NIENTE in qualita': i capi scambiati sono equivalenti
+# per il punteggio, non semplicemente vicini.
+TOLLERANZA_PAREGGIO = 0.0
+
+
+class IndiceNovita:
+    """Dice se un outfit e' abbastanza diverso da TUTTI quelli gia' accettati.
+
+    Il confronto ingenuo e' quadratico — a 7000 outfit sono 49 milioni di
+    confronti fra insiemi. Ma due outfit possono essere troppo simili solo se
+    condividono quasi tutti i capi, quindi basta guardare quelli che hanno
+    almeno un capo in comune e contare le sovrapposizioni: l'indice inverso
+    capo -> outfit riduce il confronto a una manciata di candidati.
+    """
+
+    def __init__(self, distanza_minima: int = DISTANZA_MINIMA_VARIANTI):
+        self.distanza_minima = distanza_minima
+        self._per_capo = collections.defaultdict(list)
+        self._firme = []
+
+    def __len__(self):
+        return len(self._firme)
+
+    def e_nuovo(self, firma: frozenset) -> bool:
+        conteggio = collections.Counter()
+        for capo in firma:
+            for i in self._per_capo.get(capo, ()):
+                conteggio[i] += 1
+        for i, comuni in conteggio.items():
+            altra = self._firme[i]
+            # |A - B| e |B - A|: si prende il verso piu' generoso verso di noi,
+            # cioe' il massimo, altrimenti un outfit contenuto in un altro
+            # (stessi capi piu' un cappello) passerebbe per nuovo.
+            if max(len(firma) - comuni, len(altra) - comuni) < self.distanza_minima:
+                return False
+        return True
+
+    def aggiungi(self, firma: frozenset) -> None:
+        i = len(self._firme)
+        self._firme.append(firma)
+        for capo in firma:
+            self._per_capo[capo].append(i)
 
 MANDATORY_SLOTS = ["top", "bottom", "shoes"]
 OPTIONAL_SLOTS = ["outerwear", "accessory"]
@@ -298,7 +357,8 @@ def classify_bottom_da_tuta(title: str) -> bool:
     return bool(BOTTOM_DA_TUTA.search(title or ""))
 
 
-CATALOGO = Path(__file__).resolve().parent / "nuvolari_full_organizzato"
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
+CATALOGO = _CATALOGO
 
 
 def _descrizioni(relpath_voluti: set) -> dict:
@@ -574,18 +634,82 @@ def candidates_for_slot(df: pd.DataFrame, slot: str, anchor_row: pd.Series, used
     return candidates
 
 
-def build_outfit(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w_stile: float = 0.5,
-                  beam_width: int = 5, candidates_per_step: int = 30) -> dict:
-    """Costruisce un outfit a partire da un capo ancora, via beam search
-    slot per slot. Ritorna None se l'ancora non ha uno slot riconosciuto o
-    se non si riesce a riempire tutti gli slot obbligatori."""
+def valida_composizione(o: dict, df) -> tuple:
+    """(score, None) se la composizione passa le regole attuali, altrimenti
+    (score, motivo). Applica i vincoli di candidates_for_slot a un outfit
+    GIA' composto, che la beam search non puo' piu' rivedere.
+
+    Sta qui e non in ripesca_orfane perche' servono a due chiamanti: il
+    ripescaggio delle immagini pagate e l'accumulo del pool, che deve poter
+    dire se un outfit generato ieri regge ancora le regole di oggi."""
+    items = []
+    for s, v in o["slots"].items():
+        if not v:
+            continue
+        if v["relpath"] not in df.index:
+            return None, "capo sparito dal catalogo"
+        items.append((s, df.loc[v["relpath"]]))
+    rows = dict(items)
+
+    if any(r["needs_vision_review"] for _, r in items):
+        return None, "needs_vision_review"
+
+    coppie = {}
+    for (sa, a), (sb, b) in itertools.combinations(items, 2):
+        coppie[f"{sa}-{sb}"] = score_pair(a, b)["score"]
+    m = min(coppie.values())
+    if m < OPTIONAL_SLOT_MIN_SCORE:
+        return m, f"score sotto {OPTIONAL_SLOT_MIN_SCORE}"
+
+    generi = {r["gender"] for _, r in items} - {None}
+    if len(generi) > 1:
+        return m, "genere misto"
+    for (_, a), (_, b) in itertools.combinations(items, 2):
+        if not (a["season"] == "tutte" or b["season"] == "tutte" or a["season"] == b["season"]):
+            return m, f"stagioni {a['season']}/{b['season']}"
+    fs = [r["formality_norm"] for _, r in items]
+    if max(fs) - min(fs) > FORMALITY_SPREAD_MAX:
+        return m, "dispersione formalita'"
+
+    top, bot, ow, sh = (rows.get(k) for k in ("top", "bottom", "outerwear", "shoes"))
+    if bot is not None and bot["leg_length"] == "corta":
+        if top is not None and top["sleeve"] != "corta":
+            return m, "R1 maniche lunghe su shorts"
+        if ow is not None:
+            return m, "R2 giacca su shorts"
+    if any(r["season"] == "inverno" for _, r in items) and (
+            (bot is not None and bot["leg_length"] == "corta")
+            or (top is not None and top["sleeve"] == "corta")):
+        return m, "R1 capo invernale su pelle scoperta"
+    if sh is not None and sh["mocassino"] and top is not None and top["top_senza_collo"]:
+        return m, "R3 mocassino su top senza collo"
+    if ow is not None and ow["cappotto"] and bot is not None and bot["bottom_da_tuta"]:
+        return m, "R4 cappotto su tuta"
+    return m, None
+
+
+def build_outfits(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w_stile: float = 0.5,
+                   beam_width: int = 5, candidates_per_step: int = 30,
+                   varianti: int = 1, contatore_uso=None) -> list:
+    """Costruisce fino a `varianti` outfit distinti a partire da un capo
+    ancora, via beam search slot per slot, ordinati dal migliore. Ritorna
+    lista vuota se l'ancora non ha uno slot riconosciuto o se non si riesce
+    a riempire tutti gli slot obbligatori.
+
+    Il tetto vero e' beam_width: oltre quello non ci sono rami da consegnare."""
+    # Senza contatore in ingresso la rotazione vale solo dentro questa ancora:
+    # e' il comportamento giusto per un chiamante singolo (audit_pipeline), non
+    # per il pool, che ne passa uno condiviso da tutte le ancore.
+    if contatore_uso is None:
+        contatore_uso = collections.Counter()
+
     anchor_rows = df[df["relpath"] == anchor_relpath]
     if anchor_rows.empty:
-        return None
+        return []
     anchor = anchor_rows.iloc[0]
     anchor_slot = anchor["slot"]
     if anchor_slot not in MANDATORY_SLOTS:
-        return None
+        return []
 
     remaining_mandatory = [s for s in MANDATORY_SLOTS if s != anchor_slot]
 
@@ -625,7 +749,7 @@ def build_outfit(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w
                 new_beam.append((new_items, new_used, new_score))
 
         if not new_beam:
-            return None  # nessun candidato disponibile per questo slot -> outfit non completabile
+            return []  # nessun candidato disponibile per questo slot -> outfit non completabile
         new_beam.sort(key=lambda t: t[2], reverse=True)
         beam = [(items, used) for items, used, _ in new_beam[:beam_width]]
 
@@ -663,36 +787,85 @@ def build_outfit(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w
                 lambda c: OPTIONAL_OUTLIER_MIN_SCORE if c == -1 else OPTIONAL_SLOT_MIN_SCORE)
             ammessi = candidates[candidates["_score"] >= soglie]
             if not ammessi.empty:
-                best_candidate = ammessi.loc[ammessi["_score"].idxmax()]
+                # A parita' di punteggio vince il capo MENO usato finora.
+                #
+                # Qui i pareggi non sono l'eccezione, sono la regola: misurato
+                # su 60 outfit, i candidati capospalla ammessi erano 99 su 99 e
+                # il margine fra il primo e il secondo aveva mediana 0,0000, con
+                # in media sei capi appaiati al massimo (fino a 102). Il nero
+                # armonizza col massimo su tutto, quindi mezzo guardaroba di
+                # bomber neri casual finisce con lo stesso identico punteggio.
+                #
+                # `idxmax` rompeva quei pareggi prendendo la prima riga, sempre
+                # la stessa: un solo bomber compariva in 4132 outfit e 143
+                # capispalla su 274 non entravano in NESSUNO. Non era una scelta
+                # di gusto, era l'ordine del dataframe. Ruotando fra i pari
+                # merito il punteggio non cambia di un centesimo -- sono
+                # identici per definizione -- e il guardaroba entra tutto.
+                massimo = ammessi["_score"].max()
+                pari = ammessi[ammessi["_score"] >= massimo - TOLLERANZA_PAREGGIO]
+                best_candidate = pari.loc[
+                    pari["relpath"].map(lambda r: contatore_uso[r]).idxmin()]
+                contatore_uso[best_candidate["relpath"]] += 1
                 items = items + [(slot, best_candidate)]
                 used = used | {best_candidate["relpath"]}
         return items
 
+    def _confeziona(items):
+        # punteggi pairwise finali, per trasparenza/debug
+        pairwise_scores = {}
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                slot_i, row_i = items[i]
+                slot_j, row_j = items[j]
+                pairwise_scores[f"{slot_i}-{slot_j}"] = score_pair(row_i, row_j, w_colore, w_stile)["score"]
+
+        outfit_score = min(pairwise_scores.values()) if pairwise_scores else 1.0
+
+        slots_out = {slot: None for slot in MANDATORY_SLOTS + OPTIONAL_SLOTS}
+        for slot, row in items:
+            slots_out[slot] = {
+                "relpath": row["relpath"],
+                "title": row["title"],
+                "url": row["url"],
+                "display_image": row.get("display_image"),
+                "all_images": row.get("all_images"),
+            }
+        return {"slots": slots_out,
+                "pairwise_scores": {k: round(v, 3) for k, v in pairwise_scores.items()},
+                "outfit_score": round(outfit_score, 3)}
+
+    # Tutto il menu che questa ancora sa produrre, dal migliore in giu'. La
+    # beam search completa beam_width rami e prima ne consegnava uno solo: gli
+    # altri erano gia' costruiti, valutati e buttati.
+    #
+    # Qui NON si decide piu' quali tenere. Se due rami sono quasi uguali lo
+    # sono rispetto a questa ancora, ma la somiglianza che conta e' quella
+    # verso l'INTERO pool: un'altra ancora puo' aver gia' prodotto lo stesso
+    # outfit, e da qui non si vede. La scelta sta in run_outfit_pipeline.
     completi = [_completa(items, used) for items, used in beam]
-    best_items = max(completi, key=_min_pairwise)
+    completi.sort(key=_min_pairwise, reverse=True)
 
-    # punteggi pairwise finali, per trasparenza/debug
-    pairwise_scores = {}
-    for i in range(len(best_items)):
-        for j in range(i + 1, len(best_items)):
-            slot_i, row_i = best_items[i]
-            slot_j, row_j = best_items[j]
-            pairwise_scores[f"{slot_i}-{slot_j}"] = score_pair(row_i, row_j, w_colore, w_stile)["score"]
+    fuori, visti = [], set()
+    for items in completi:
+        firma = frozenset(r["relpath"] for _, r in items)
+        if firma in visti:
+            continue  # due rami possono chiudersi sullo stesso identico insieme
+        visti.add(firma)
+        fuori.append(_confeziona(items))
+        if len(fuori) >= max(1, varianti):
+            break
+    return fuori
 
-    outfit_score = min(pairwise_scores.values()) if pairwise_scores else 1.0
 
-    slots_out = {slot: None for slot in MANDATORY_SLOTS + OPTIONAL_SLOTS}
-    for slot, row in best_items:
-        slots_out[slot] = {
-            "relpath": row["relpath"],
-            "title": row["title"],
-            "url": row["url"],
-            "display_image": row.get("display_image"),
-            "all_images": row.get("all_images"),
-        }
-
-    return {"slots": slots_out, "pairwise_scores": {k: round(v, 3) for k, v in pairwise_scores.items()},
-            "outfit_score": round(outfit_score, 3)}
+def build_outfit(df: pd.DataFrame, anchor_relpath: str, w_colore: float = 0.5, w_stile: float = 0.5,
+                  beam_width: int = 5, candidates_per_step: int = 30) -> dict:
+    """Il solo outfit migliore per questa ancora, o None. Involucro su
+    build_outfits per i chiamanti che ne vogliono uno (audit_pipeline,
+    generate_outfits)."""
+    fuori = build_outfits(df, anchor_relpath, w_colore, w_stile,
+                          beam_width, candidates_per_step, varianti=1)
+    return fuori[0] if fuori else None
 
 
 def generate_outfits(df: pd.DataFrame, n_outfits: int = 10, anchor_slot: str = "top",
@@ -785,7 +958,8 @@ def _build_outfit_label(gender, slots: dict) -> str:
 
 def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.46,
                          w_colore: float = 0.5, w_stile: float = 0.5,
-                         beam_width: int = 5, candidates_per_step: int = 30) -> dict:
+                         beam_width: int = 15, candidates_per_step: int = 30,
+                         varianti_per_ancora: int = 3, accumula: bool = True) -> dict:
     """Genera l'intero pool di outfit scansionando OGNI slot obbligatorio
     (top, bottom, scarpe) come ancora a turno — non solo "top" come fa
     generate_outfits di default — in ordine deterministico per relpath.
@@ -805,11 +979,63 @@ def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.4
     outfit un outfit_id stabile (vedi build_garment_id/build_outfit_id) —
     lo stesso outfit rigenerato in run successive mantiene lo stesso id.
     """
-    seen_signatures = set()
     total_anchors_tried = 0
     total_outfits_written = 0
 
+    # Accumulo: un outfit gia' nel pool che regge ancora le regole non viene
+    # buttato solo perche' la beam search di oggi ha preferito altro. Il pool
+    # e' un catalogo di proposte valide, non la classifica di un singolo run:
+    # ogni rigenerazione da zero costava outfit legittimi (e le loro immagini
+    # gia' pagate, che finivano orfane). I superstiti si riscrivono con i
+    # punteggi RICALCOLATI, non con quelli vecchi, altrimenti il pool
+    # mescolerebbe due tarature diverse.
+    ereditati = []
+    per_passata = []
+    scartati = 0
+    if accumula and os.path.exists(out_jsonl):
+        df_idx = df.set_index("relpath", drop=False)
+        for riga in open(out_jsonl, encoding="utf-8"):
+            riga = riga.strip()
+            if not riga:
+                continue
+            o = json.loads(riga)
+            punteggio, motivo = valida_composizione(o, df_idx)
+            if motivo or punteggio is None or punteggio < min_score:
+                scartati += 1
+                continue
+            items = [(s, df_idx.loc[v["relpath"]]) for s, v in o["slots"].items() if v]
+            coppie = {f"{sa}-{sb}": round(score_pair(a, b, w_colore, w_stile)["score"], 3)
+                      for (sa, a), (sb, b) in itertools.combinations(items, 2)}
+            o["pairwise_scores"] = coppie
+            o["outfit_score"] = round(min(coppie.values()), 3)
+            ereditati.append(o)
+        print(f"[*] Pool esistente: {len(ereditati)} outfit confermati, "
+              f"{scartati} non passano piu' le regole", flush=True)
+
+    # Gli ereditati fanno gia' parte del pool: i nuovi devono essere diversi
+    # anche da loro, non solo fra di se'.
+    indice = IndiceNovita()
+    for o in ereditati:
+        indice.aggiungi(frozenset(v["relpath"] for v in o["slots"].values() if v))
+
     with open(out_jsonl, "w", encoding="utf-8") as f:
+        for o in ereditati:
+            f.write(json.dumps(o, ensure_ascii=False) + "\n")
+            total_outfits_written += 1
+        f.flush()
+
+        # Un solo contatore per tutta la generazione: e' cosi' che la rotazione
+        # fra pari merito distribuisce capispalla e accessori sull'intero
+        # guardaroba invece che dentro una singola ancora. Parte da quello che
+        # il pool ereditato usa gia', altrimenti i capi consumati dai run
+        # precedenti ripartirebbero da zero e vincerebbero di nuovo.
+        contatore_uso = collections.Counter(
+            v["relpath"] for o in ereditati for s, v in o["slots"].items()
+            if v and s in OPTIONAL_SLOTS)
+
+        # Menu completo di ogni ancora, calcolato una volta sola: la beam
+        # search e' la parte cara, l'ammissione e' aritmetica su insiemi.
+        menu = []
         for anchor_slot in MANDATORY_SLOTS:
             anchor_pool = df[(df["slot"] == anchor_slot) & (~df["needs_vision_review"].astype(bool))]
             anchor_pool = anchor_pool.sort_values("relpath")
@@ -818,36 +1044,95 @@ def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.4
 
             for i, (_, anchor) in enumerate(anchor_pool.iterrows(), 1):
                 total_anchors_tried += 1
-                outfit = build_outfit(df, anchor["relpath"], w_colore, w_stile, beam_width, candidates_per_step)
-
+                proposte = build_outfits(df, anchor["relpath"], w_colore, w_stile,
+                                          beam_width, candidates_per_step,
+                                          varianti=beam_width,
+                                          contatore_uso=contatore_uso)
+                proposte = [o for o in proposte if o["outfit_score"] >= min_score]
+                if proposte:
+                    menu.append((anchor_slot, anchor, proposte))
                 if i % 200 == 0 or i == n:
-                    print(f"    [{anchor_slot} {i}/{n}] outfit unici finora: {total_outfits_written}", flush=True)
+                    print(f"    [{anchor_slot} {i}/{n}] ancore con proposte: {len(menu)}", flush=True)
 
-                if not outfit or outfit["outfit_score"] < min_score:
+        # ORDINE, non selezione. Nel pool finisce tutto quello che e' valido,
+        # quasi-doppioni compresi: quello che l'indice decide e' soltanto QUANDO.
+        #
+        # Le passate mettono per primo l'outfit migliore di ogni ancora, poi il
+        # secondo, e ogni volta solo se e' lontano da tutto il resto: cosi' i
+        # primi migliaia di outfit coprono il catalogo il piu' possibile. Quello
+        # che le passate scartano non e' perso -- resta nel menu e viene scritto
+        # in coda, quando lo spazio distinto e' finito.
+        firme_esatte = {frozenset(v["relpath"] for v in o["slots"].values() if v)
+                        for o in ereditati}
+
+        def _scrivi(anchor_slot, anchor, outfit):
+            relpaths = [v["relpath"] for v in outfit["slots"].values() if v]
+            record = {
+                "outfit_id": build_outfit_id(relpaths),
+                "label": _build_outfit_label(anchor.get("gender"), outfit["slots"]),
+                "gender": anchor.get("gender"),
+                "outfit_score": outfit["outfit_score"],
+                "anchor_slot": anchor_slot,
+                "anchor_relpath": anchor["relpath"],
+                "slots": _serialize_slots(outfit["slots"]),
+                "pairwise_scores": outfit["pairwise_scores"],
+            }
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        presi = [set() for _ in menu]
+        for passata in range(1, max(1, varianti_per_ancora) + 1):
+            ammessi_passata = 0
+            for m, (anchor_slot, anchor, proposte) in enumerate(menu):
+                for n_prop, outfit in enumerate(proposte):
+                    if n_prop in presi[m]:
+                        continue
+                    firma = frozenset(v["relpath"] for v in outfit["slots"].values() if v)
+                    if firma in firme_esatte:
+                        presi[m].add(n_prop)  # gia' nel pool: mai piu' da guardare
+                        continue
+                    if not indice.e_nuovo(firma):
+                        continue  # troppo simile: lo riprende la coda
+                    indice.aggiungi(firma)
+                    firme_esatte.add(firma)
+                    presi[m].add(n_prop)
+                    _scrivi(anchor_slot, anchor, outfit)
+                    total_outfits_written += 1
+                    ammessi_passata += 1
+                    break
+            f.flush()
+            per_passata.append(ammessi_passata)
+            print(f"[*] Passata {passata}: {ammessi_passata} outfit distinti "
+                  f"(pool a {total_outfits_written})", flush=True)
+            if not ammessi_passata:
+                break  # nessuno spazio distinto rimasto: le passate dopo sono vuote
+
+        # Coda: tutto il resto del menu. Qui l'unico filtro e' l'identita' --
+        # due volte lo stesso identico insieme di capi sarebbe lo stesso
+        # outfit_id, non una proposta in piu'.
+        in_coda = 0
+        for m, (anchor_slot, anchor, proposte) in enumerate(menu):
+            for n_prop, outfit in enumerate(proposte):
+                if n_prop in presi[m]:
                     continue
-
-                relpaths = [v["relpath"] for v in outfit["slots"].values() if v]
-                signature = frozenset(relpaths)
-                if signature in seen_signatures:
+                firma = frozenset(v["relpath"] for v in outfit["slots"].values() if v)
+                if firma in firme_esatte:
                     continue
-                seen_signatures.add(signature)
-
-                record = {
-                    "outfit_id": build_outfit_id(relpaths),
-                    "label": _build_outfit_label(anchor.get("gender"), outfit["slots"]),
-                    "gender": anchor.get("gender"),
-                    "outfit_score": outfit["outfit_score"],
-                    "anchor_slot": anchor_slot,
-                    "anchor_relpath": anchor["relpath"],
-                    "slots": _serialize_slots(outfit["slots"]),
-                    "pairwise_scores": outfit["pairwise_scores"],
-                }
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                f.flush()
+                firme_esatte.add(firma)
+                _scrivi(anchor_slot, anchor, outfit)
                 total_outfits_written += 1
+                in_coda += 1
+        f.flush()
+        print(f"[*] Coda (quasi-doppioni validi): {in_coda} outfit "
+              f"(pool a {total_outfits_written})", flush=True)
+
 
     stats = {
         "ancore_processate": total_anchors_tried,
+        "outfit_ereditati": len(ereditati),
+        "outfit_scartati_dal_pool_vecchio": scartati,
+        "outfit_nuovi": total_outfits_written - len(ereditati),
+        "nuovi_per_passata": per_passata,
+        "nuovi_in_coda": in_coda,
         "outfit_unici_scritti": total_outfits_written,
         "output": out_jsonl,
     }

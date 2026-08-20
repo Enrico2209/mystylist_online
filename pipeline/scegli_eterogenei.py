@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pandas as pd
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 POOL = BASE / "outfits_pool.jsonl"
 CLUSTERED = BASE / "features_clustered.parquet"
 SLOT_ORDER = ["top", "bottom", "shoes", "outerwear", "accessory"]

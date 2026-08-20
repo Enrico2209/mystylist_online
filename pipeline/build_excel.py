@@ -27,7 +27,7 @@ from PIL import Image
 
 from outfit_generation import classify_gender
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 ROOT = BASE / "nuvolari_full_organizzato"
 JSONL = BASE / "outfits_pool.jsonl"
 OUT_XLSX = BASE / "outfits_pool.xlsx"

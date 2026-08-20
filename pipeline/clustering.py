@@ -39,8 +39,7 @@ import pandas as pd
 from sklearn.cluster import HDBSCAN
 
 STYLE_TAGS = [
-    "elegante", "casual", "streetwear", "sportivo", "workwear",
-    "outdoor_tecnico", "vintage_prep", "minimal", "military", "boho_fantasia",
+    "sportivo", "casual", "elegante", "streetwear", "da_mare",
 ]
 SEASONS = ["estate", "inverno", "mezza_stagione", "tutte"]
 

@@ -24,7 +24,7 @@ from pathlib import Path
 from generate_outfit_images import (MAX_REF_IMAGES, ROOT, allocate_photos,
                                      load_formality, outfit_formality)
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 JSONL = BASE / "outfits_pool.jsonl"
 IMG_DIR = BASE / "outfit_images"
 LOG = BASE / "outfit_images_log.jsonl"

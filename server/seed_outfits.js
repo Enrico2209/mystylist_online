@@ -29,7 +29,11 @@ const pool = new Pool({
 async function main() {
     const soloStato = process.argv.includes("--stato");
 
-    outfits.carica();
+    // carica() e' async: senza await la promise resta pendente e codici()
+    // trova il catalogo vuoto, per cui un banale "file non trovato" usciva
+    // come "Catalogo non caricato: chiama carica() all'avvio" -- che indica
+    // un punto del codice diverso da quello rotto.
+    await outfits.carica();
     const codici = outfits.codici();
     console.log(`JSON: ${codici.length} outfit con immagine generata`);
 

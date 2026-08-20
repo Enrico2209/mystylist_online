@@ -34,10 +34,10 @@ from skimage.segmentation import flood
 from sklearn.cluster import KMeans
 
 from scrape_with_attributes import compute_style_scores
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 
 STYLE_TAGS = [
-    "elegante", "casual", "streetwear", "sportivo", "workwear",
-    "outdoor_tecnico", "vintage_prep", "minimal", "military", "boho_fantasia",
+    "sportivo", "casual", "elegante", "streetwear", "da_mare",
 ]
 SEASONS = ["estate", "inverno", "mezza_stagione", "tutte"]
 STYLE_SCORE_CAP = 3.0  # oltre questo valore il punteggio satura a 1.0 (vedi derive_attributes)
@@ -227,7 +227,7 @@ def needs_review_effettivo(metadata: dict) -> bool:
 # descrizione completa ne' il procedimento sulla formalita', e divergevano dal
 # testo di almeno un livello nel 35% dei capi. Finche' un capo non e' stato
 # rivisto sotto la guida nuova, la sua formalita' resta quella testuale.
-FONTE_GUIDA = "foto+descrizione"
+FONTE_GUIDA = "foto+descrizione-5tag"
 
 
 def formalita_effettiva(metadata: dict):
@@ -248,19 +248,41 @@ def formalita_effettiva(metadata: dict):
     return metadata.get("formality_score")
 
 
-def build_style_vector(metadata: dict) -> dict:
-    # punteggi grezzi (non sogliati) ricalcolati dal testo già in metadata.json —
-    # metadata["style_tags"] è invece filtrato a soglia 0.5 in Fase 2 (badge per
-    # needs_vision_review) e azzererebbe segnale reale sotto soglia se usato qui
-    raw_scores, _text_matched_tags = compute_style_scores(metadata)
+def mistura_di_stile(metadata: dict) -> dict:
+    """La ripartizione fra i registri, normalizzata a somma 1.
+
+    Con cinque registri la classificazione non è più un insieme di flag
+    indipendenti ma una RIPARTIZIONE: una camicia è metà elegante e metà casual,
+    una tuta metà sportiva e metà casual. Sommare i punteggi del testo a quelli
+    della revisione romperebbe proprio la cosa che li rende leggibili — un capo
+    dato "casual 1.0" diventerebbe casual 0.75 / sportivo 0.25 solo perché nella
+    prosa compare la parola "running". Quindi: se la revisione c'è, è lei la
+    classificazione; il testo resta solo per i capi che la revisione non ha.
+    """
     revisione = metadata.get("vision_review") or {}
-    for tag, punteggio in (revisione.get("style_scores") or {}).items():
-        if tag in raw_scores:
-            raw_scores[tag] += VISION_STYLE_WEIGHT * float(punteggio)
-    tag_values = {
-        f"style_{tag}": min(raw_scores.get(tag, 0.0), STYLE_SCORE_CAP) / STYLE_SCORE_CAP
-        for tag in STYLE_TAGS
-    }
+    mistura = {t: float(v) for t, v in (revisione.get("style_scores") or {}).items()
+               if t in STYLE_TAGS and float(v) > 0}
+    if not mistura:
+        grezzi, _ = compute_style_scores(metadata)
+        mistura = {t: v for t, v in grezzi.items() if t in STYLE_TAGS and v > 0}
+    totale = sum(mistura.values())
+    if not totale:
+        return {t: 0.0 for t in STYLE_TAGS}
+    return {t: mistura.get(t, 0.0) / totale for t in STYLE_TAGS}
+
+
+def fantasia_effettiva(metadata: dict) -> str:
+    """La fantasia del capo: quella vista nella foto, o quella del testo.
+
+    La revisione visiva viene prima perche' la fantasia e' la cosa che il testo
+    nomina peggio — spesso non la nomina affatto, o nomina un dettaglio.
+    """
+    revisione = metadata.get("vision_review") or {}
+    return revisione.get("pattern") or metadata.get("pattern") or "tinta_unita"
+
+
+def build_style_vector(metadata: dict) -> dict:
+    tag_values = {f"style_{tag}": v for tag, v in mistura_di_stile(metadata).items()}
 
     formality = formalita_effettiva(metadata)
     formality_norm = (formality - 1) / 4 if formality is not None else 0.5
@@ -321,6 +343,7 @@ def build_feature_table(root: str, out_parquet: str = None, limit: int = None) -
             "brand_slug": metadata.get("brand_slug"),
             "title": metadata.get("title"),
             "needs_vision_review": needs_review_effettivo(metadata),
+            "pattern": fantasia_effettiva(metadata),
             "representative_image": str(rep_image.relative_to(root_dir)),
             "L": color["dominant_lab"][0],
             "a": color["dominant_lab"][1],
@@ -371,11 +394,29 @@ def recompute_style_vectors(features_parquet: str, root: str, out_parquet: str =
     return df
 
 
-IDF_FILE = Path(__file__).resolve().parent / "style_idf.json"
+IDF_FILE = BASE / "style_idf.json"
 
 
 def applica_idf(features_parquet: str, out_parquet: str = None) -> pd.DataFrame:
-    """Ripesa i 10 tag di stile per quanto sono RARI nel catalogo.
+    """NON PIU' IN USO dal 20 agosto. Vedi sotto prima di rimetterla in catena.
+
+    Serviva quando lo stile era dieci flag indipendenti e "casual" compariva sul
+    96% dei capi senza voler dire niente: quel tono di fondo schiacciava lo
+    spazio, e pesare i tag per la loro rarita' lo riapriva.
+
+    Con cinque registri assegnati come RIPARTIZIONE che somma a 1, "casual" non
+    e' piu' un tono di fondo: e' la base condivisa del guardaroba, dichiarata
+    apposta. L'IDF gli dava peso 0,16 e cancellava proprio quella — un giubbotto
+    "casual 0.9" e un cappello "casual 0.7" scendevano da 0,914 a 0,226, cioe'
+    due capi che stanno benissimo insieme risultavano incompatibili.
+
+    Toglierla non ha riaperto la porta al rumore, misurato su 4000 coppie a
+    caso: le coppie sbagliate restano a zero (giacca elegante + running 0,012,
+    + costume 0,000). La separazione ora viene dalla tassonomia, non dai pesi.
+
+    --- documentazione originale ---
+
+    Ripesa i 10 tag di stile per quanto sono RARI nel catalogo.
 
     Serve perché la revisione visiva ha un fortissimo tono di fondo: Gemini
     assegna "casual" al 96% dei capi e lo fa dominante nel 57%. Un tag che
@@ -385,7 +426,7 @@ def applica_idf(features_parquet: str, out_parquet: str = None) -> pd.DataFrame:
     intorno il 78% di outlier.
 
     Il peso è l'IDF classico, log(1/prevalenza): "casual" (96%) scende a 0,04,
-    "military" o "outdoor_tecnico" (5%) salgono a ~3. Condividere un tratto
+    "boho_fantasia" o "elegante" (5%) salgono a ~3. Condividere un tratto
     raro è prova di somiglianza molto più forte che condividerne uno comune.
     Dopo la ripesatura il coseno mediano torna a 0,28 e i cluster a 25, con il
     più grande al 17% del catalogo.

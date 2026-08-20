@@ -227,6 +227,85 @@ REFERENCE_STYLE_NORM = 0.69
 COSENO_NEUTRO = 0.40
 
 
+# --------------------------------------------------------------------------
+# Affinita' fra registri stilistici
+# --------------------------------------------------------------------------
+# Il coseno secco misura quanto due capi occupano GLI STESSI registri, non
+# quanto i loro registri stanno bene insieme. Con cinque assi ortogonali per
+# costruzione, ogni abbinamento misto veniva punito: sneaker (sportivo 0.7) e
+# jeans (streetwear 0.6) davano coseno 0.219, cioe' l'abbinamento piu' comune
+# del campionario risultava fra i peggiori. Misurato su coppie casuali, tutta
+# la diagonale stava fra 0.80 e 0.94 e tutto il resto fra 0.03 e 0.41.
+#
+# Con questa matrice il prodotto diventa x'Ay: le caselle dicono quanto due
+# registri convivono. I valori sono una scelta di gusto, non una misura --
+# 'casual' e' il ponte verso tutto perche' e' cosi' che e' fatto il
+# campionario (2397 capi su 2901 lo hanno come dominante), ed 'elegante' e'
+# l'unico registro che si chiude davvero.
+AFFINITA_REGISTRI = {
+    ("sportivo",   "casual"):     0.85,
+    ("sportivo",   "elegante"):   0.15,
+    ("sportivo",   "streetwear"): 0.80,
+    ("sportivo",   "da_mare"):    0.60,
+    ("casual",     "elegante"):   0.65,
+    ("casual",     "streetwear"): 0.85,
+    ("casual",     "da_mare"):    0.75,
+    ("elegante",   "streetwear"): 0.25,
+    ("elegante",   "da_mare"):    0.20,
+    ("streetwear", "da_mare"):    0.55,
+}
+
+
+# Coseno pesato piu' basso osservato fra due capi del catalogo: sotto questo
+# valore la scala e' vuota. Rimisurare se la matrice cambia.
+PAVIMENTO_AFFINITA = 0.40
+
+
+def _matrice_affinita():
+    """Costruita dall'ordine di STYLE_TAG_COLUMNS, non da un ordine scritto a
+    mano: se un tag cambia posto la matrice segue, invece di scambiare due
+    registri in silenzio."""
+    tag = [c[len("style_"):] for c in STYLE_TAG_COLUMNS]
+    n = len(tag)
+    A = np.eye(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            v = AFFINITA_REGISTRI.get((tag[i], tag[j]))
+            if v is None:
+                v = AFFINITA_REGISTRI.get((tag[j], tag[i]))
+            if v is None:
+                raise KeyError(f"affinita' mancante fra {tag[i]} e {tag[j]}")
+            A[i, j] = A[j, i] = float(v)
+    return A
+
+
+MATRICE_AFFINITA = _matrice_affinita()
+
+
+def coseno_pesato(a, b, A=None) -> float:
+    """Coseno generalizzato x'Ay / sqrt(x'Ax * y'By). Vale 1 su vettori
+    identici come il coseno normale, ma due registri diversi e affini non
+    danno piu' zero."""
+    A = MATRICE_AFFINITA if A is None else A
+    na = float(a @ A @ a)
+    nb = float(b @ A @ b)
+    if na <= 0 or nb <= 0:
+        return 0.0
+    grezzo = float(a @ A @ b) / math.sqrt(na * nb)
+
+    # Il coseno pesato comprime tutto in alto: misurato su 20.000 coppie
+    # casuali dava mediana 0,955 e sd 0,086, cioe' l'ordine giusto ma nessuna
+    # capacita' di distinguere. Le caselle piene della matrice alzano il
+    # pavimento, non il soffitto, e sotto PAVIMENTO_AFFINITA non ci arriva
+    # nessuno: quella parte di scala non porta informazione.
+    #
+    # Il quadrato non cambia l'ordine -- lo decide la matrice -- ma riporta la
+    # dispersione a quella del coseno secco, cosi' la soglia degli slot
+    # opzionali e il peso della penalita' di formalita' restano tarati.
+    steso = (grezzo - PAVIMENTO_AFFINITA) / (1.0 - PAVIMENTO_AFFINITA)
+    return max(0.0, min(1.0, steso)) ** 2
+
+
 def style_match(style_vec_a, style_vec_b, formality_a: float, formality_b: float,
                  formality_penalty_weight: float = 0.5) -> float:
     """Coseno tra vettori stile, penalizzato dalla distanza di formalità E
@@ -254,10 +333,22 @@ def style_match(style_vec_a, style_vec_b, formality_a: float, formality_b: float
     a = np.asarray(style_vec_a, dtype=float)
     b = np.asarray(style_vec_b, dtype=float)
     norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
-    cos = float(np.dot(a, b) / (norm_a * norm_b)) if norm_a > 0 and norm_b > 0 else 0.0
+    cos = coseno_pesato(a, b) if norm_a > 0 and norm_b > 0 else 0.0
 
-    confidence = min(1.0, min(norm_a, norm_b) / REFERENCE_STYLE_NORM)
-    cos = confidence * cos + (1 - confidence) * COSENO_NEUTRO
+    # Smorzamento disattivato. Presupponeva che una norma bassa volesse dire
+    # "non sappiamo cosa sia questo capo": vero finche' i tag erano bandierine
+    # indipendenti ricavate dal testo, e una scheda muta lasciava il vettore
+    # quasi a zero. Ora i punteggi sono una ripartizione che somma sempre a 1,
+    # assegnata dalla revisione visiva su tutti e 2901 i capi: ogni vettore
+    # porta la stessa massa e la norma misura solo QUANTO E' SPARSA la mistura,
+    # non quanto ne sappiamo. Smorzare avrebbe colpito 368 capi, cioe' proprio
+    # quelli a mistura voluta -- le camicie 0,6 casual / 0,4 elegante sono il
+    # 25esimo percentile della norma -- appiattendo la distinzione piu' curata
+    # che abbiamo. Il codice resta perche' tornerebbe valido se un giorno
+    # entrassero in catalogo capi non revisionati.
+    if False:  # pragma: no cover
+        confidence = min(1.0, min(norm_a, norm_b) / REFERENCE_STYLE_NORM)
+        cos = confidence * cos + (1 - confidence) * COSENO_NEUTRO
 
     formality_diff = abs(formality_a - formality_b)  # formality_norm è già 0-1
     penalty = formality_penalty_weight * formality_diff
@@ -288,6 +379,39 @@ def _palette(row: pd.Series):
     return json.loads(grezza) if isinstance(grezza, str) else grezza
 
 
+# Due fantasie forti addosso alla stessa persona si contendono lo sguardo: e'
+# la regola di stile piu' vecchia che ci sia, e finora il campo "pattern" —
+# calcolato per tutti i capi da Fase 2 e dalla revisione visiva — non lo leggeva
+# nessuno.
+#
+# La forza dice quanto la fantasia si impone: le righe si portano sotto una
+# giacca a quadri e non succede niente, un animalier e un camouflage insieme
+# sono un'altra cosa. Una tinta unita vale 0, quindi basta che UNO dei due capi
+# sia tinta unita perche' la penalita' sparisca del tutto: e' il caso normale,
+# e non deve pagare nulla.
+FANTASIA_FORZA = {
+    "tinta_unita": 0.0,
+    "righe": 0.45,
+    "quadri": 0.55,
+    "stampato": 0.85,
+    "camouflage": 0.90,
+    "animalier": 1.00,
+}
+PENALITA_FANTASIE = 0.22   # sottratta al punteggio quando entrambe sono al massimo
+
+
+def stono_da_fantasie(pattern_a: str, pattern_b: str) -> float:
+    """Quanto le due fantasie si contendono lo sguardo, da 0 a 1.
+
+    E' il PRODOTTO delle due forze, non la somma: serve che siano forti
+    entrambe. Un capo a righe con una tinta unita non e' un errore, e con la
+    somma lo sarebbe stato a meta'.
+    """
+    fa = FANTASIA_FORZA.get(pattern_a, 0.0)
+    fb = FANTASIA_FORZA.get(pattern_b, 0.0)
+    return fa * fb
+
+
 def score_pair(row_a: pd.Series, row_b: pd.Series, w_colore: float = 0.5, w_stile: float = 0.5,
                use_palette: bool = True) -> dict:
     """score(A,B) completo tra due righe di features_clustered.parquet."""
@@ -299,8 +423,11 @@ def score_pair(row_a: pd.Series, row_b: pd.Series, w_colore: float = 0.5, w_stil
     style_m = style_match(_vettore_stile(row_a), _vettore_stile(row_b),
                           row_a["formality_norm"], row_b["formality_norm"])
 
-    total = w_colore * color_h + w_stile * style_m
-    return {"color_harmony": round(color_h, 3), "style_match": round(style_m, 3), "score": round(total, 3)}
+    stono = stono_da_fantasie(row_a.get("pattern"), row_b.get("pattern"))
+    total = w_colore * color_h + w_stile * style_m - PENALITA_FANTASIE * stono
+    total = max(0.0, min(1.0, total))
+    return {"color_harmony": round(color_h, 3), "style_match": round(style_m, 3),
+            "stono_fantasie": round(stono, 3), "score": round(total, 3)}
 
 
 print(

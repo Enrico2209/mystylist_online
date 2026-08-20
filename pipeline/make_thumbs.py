@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 SORGENTE = BASE / "outfit_images"
 DESTINAZIONE = BASE / "outfit_thumbs"
 LARGHEZZA = 360

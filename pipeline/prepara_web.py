@@ -24,8 +24,8 @@ from pathlib import Path
 
 from PIL import Image
 
-BASE = Path(__file__).resolve().parent
-UI = BASE / ".." / "nuvolari ui" / "mystylistprojectdating-main"
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
+UI = PROGETTI / "nuvolari ui" / "mystylistprojectdating-main"
 DEST_MEDIA = (UI / "mystylist" / "public" / "media").resolve()
 DEST_JSON = (UI / "server" / "dati").resolve()
 

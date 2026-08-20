@@ -36,11 +36,12 @@ from urllib.parse import urljoin, urlparse
  
 import requests
 from bs4 import BeautifulSoup
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
  
 BASE_URL = "https://www.nuvolari.biz"
 USER_AGENT = "NuvolariPartnerBot/1.0 (+contatto: enricociaralli@gmail.com)"
 
-BRAND_LIST_FILE = Path(__file__).resolve().parent / "brand_list.json"
+BRAND_LIST_FILE = BASE / "brand_list.json"
  
 CATEGORY_SEEDS_FALLBACK = [
     "/abbigliamento.html",
@@ -66,54 +67,37 @@ EXCLUDED_PATH_HINTS = [
 # =====================================================================
  
 STYLE_KEYWORDS = {
-    "elegante": [
-        "elegante", "raffinato", "cerimonia", "ufficio", "classe", "impeccabile",
-        "sartoriale", "blazer", "completo", "smoking", "abito", "chic",
+    "sportivo": [
+        "sportivo", "sport", "running", "training", "palestra", "fitness",
+        "tuta", "jogging", "tecnico da gara",
     ],
-    "casual": [
-        "casual", "quotidiano", "tempo libero", "comodo", "versatile",
-        "tutti i giorni", "informale",
+    "elegante": [
+        "elegante", "formale", "cerimonia", "sartoriale", "raffinato",
+        "classico", "business",
     ],
     "streetwear": [
-        "streetwear", "urban", "oversize", "graffiti", "stampa grafica",
-        "skate", "hip hop", "baggy",
+        "streetwear", "street", "urban", "skate", "hip hop", "oversize",
+        "graphic", "logo all over",
     ],
-    "sportivo": [
-        "sportivo", "tecnico performante", "training", "running", "palestra",
-        "performance", "traspirante",
+    "da_mare": [
+        "mare", "spiaggia", "beach", "costume", "boxer da bagno", "pareo",
+        "copricostume", "telo", "infradito", "ciabatte",
     ],
-    "workwear": [
-        "workwear", "cargo", "utility", "operaio", "resistente", "hi-vis",
-    ],
-    "outdoor_tecnico": [
-        "impermeabile", "membrana", "trekking", "montagna", "antivento",
-        "idrorepellente", "tecnico outdoor",
-    ],
-    "vintage_prep": [
-        "vintage", "retro", "college", "preppy", "old school",
-        "anni 70", "anni 80", "anni 90",
-    ],
-    "minimal": [
-        "minimal", "essenziale", "pulito", "lineare", "basico", "senza tempo",
-    ],
-    "military": [
-        "militare", "camouflage", "mimetico", "cargo militare",
-    ],
-    "boho_fantasia": [
-        "boho", "etnico", "fantasia", "paisley", "hippie",
+    "casual": [
+        "casual", "quotidiano", "informale", "everyday", "relax",
     ],
 }
- 
+
 MATERIAL_SIGNALS = {
-    "lana":          {"style": ["elegante", "vintage_prep"], "season": "inverno"},
+    "lana":          {"style": ["elegante"], "season": "inverno"},
     "cashmere":      {"style": ["elegante"], "season": "inverno"},
-    "piumino":       {"style": ["outdoor_tecnico"], "season": "inverno"},
-    "nylon":         {"style": ["outdoor_tecnico", "streetwear"], "season": "tutte"},
+    "piumino":       {"style": ["casual"], "season": "inverno"},
+    "nylon":         {"style": ["streetwear"], "season": "tutte"},
     "pelle":         {"style": ["streetwear", "elegante"], "season": "mezza_stagione"},
-    "denim":         {"style": ["casual", "vintage_prep"], "season": "tutte"},
+    "denim":         {"style": ["casual"], "season": "tutte"},
     "lino":          {"style": ["elegante", "casual"], "season": "estate"},
     "cotone":        {"style": ["casual"], "season": "tutte"},
-    "poliestere":    {"style": ["sportivo", "outdoor_tecnico"], "season": "tutte"},
+    "poliestere":    {"style": ["sportivo"], "season": "tutte"},
     "viscosa":       {"style": ["elegante", "casual"], "season": "mezza_stagione"},
     "elastan":       {"style": ["sportivo"], "season": "tutte"},
 }
@@ -181,7 +165,7 @@ def season_da_tipo(title: str):
 
 
 FIT_SIGNALS = {
-    "slim":     {"style": ["elegante", "minimal"], "formality_delta": 1},
+    "slim":     {"style": ["elegante"], "formality_delta": 1},
     "skinny":   {"style": ["streetwear"], "formality_delta": 0},
     "regular":  {"style": ["casual"], "formality_delta": 0},
     "oversize": {"style": ["streetwear"], "formality_delta": -1},
@@ -347,51 +331,49 @@ def formalita_da_tipo(title: str):
 
 
 STYLE_TAG_FORMALITY = {
-    "elegante": 5, "vintage_prep": 3, "minimal": 3, "casual": 2,
-    "workwear": 2, "boho_fantasia": 2, "streetwear": 1,
-    "sportivo": 1, "outdoor_tecnico": 1, "military": 2,
+    "elegante": 4, "casual": 2, "streetwear": 1, "sportivo": 1, "da_mare": 1,
 }
  
 BRAND_AFFINITY = {
     "nuvolari": ["casual", "elegante"],
-    "k-way": ["outdoor_tecnico", "casual"],
-    "the-north-face": ["outdoor_tecnico", "sportivo"],
-    "napapijri": ["outdoor_tecnico"],
-    "carhartt-wip": ["workwear", "streetwear"],
-    "dickies": ["workwear", "streetwear"],
-    "deus-ex-machina": ["streetwear", "vintage_prep"],
+    "k-way": ["casual", "sportivo"],
+    "the-north-face": ["sportivo", "casual"],
+    "napapijri": ["casual"],
+    "carhartt-wip": ["casual", "streetwear"],
+    "dickies": ["casual", "streetwear"],
+    "deus-ex-machina": ["streetwear", "casual"],
     "vans": ["streetwear"],
     "obey": ["streetwear"],
     "stussy": ["streetwear"],
-    "stone-island": ["streetwear", "outdoor_tecnico"],
-    "fred-perry": ["vintage_prep", "casual"],
-    "lyle-scott": ["vintage_prep", "casual"],
-    "lee": ["casual", "vintage_prep"],
-    "levi-s": ["casual", "vintage_prep"],
-    "calvin-klein-jeans": ["minimal", "casual"],
-    "tommy-hilfiger": ["casual", "vintage_prep"],
+    "stone-island": ["streetwear"],
+    "fred-perry": ["casual"],
+    "lyle-scott": ["casual"],
+    "lee": ["casual"],
+    "levi-s": ["casual"],
+    "calvin-klein-jeans": ["casual"],
+    "tommy-hilfiger": ["casual"],
     "tommy-jeans": ["streetwear", "casual"],
     "guess-jeans": ["casual"],
     "nike": ["sportivo", "streetwear"],
     "adidas": ["sportivo", "streetwear"],
-    "adidas-originals": ["streetwear", "vintage_prep"],
+    "adidas-originals": ["streetwear", "casual"],
     "new-balance": ["sportivo", "streetwear"],
     "asics": ["sportivo"],
-    "saucony": ["sportivo", "vintage_prep"],
+    "saucony": ["sportivo", "casual"],
     "hoka": ["sportivo"],
-    "dr-martens": ["streetwear", "vintage_prep"],
-    "colmar-originals": ["outdoor_tecnico", "elegante"],
-    "blauer": ["outdoor_tecnico", "casual"],
-    "woolrich": ["outdoor_tecnico", "elegante"],
-    "c-p-company": ["outdoor_tecnico", "streetwear"],
-    "ralph-lauren": ["elegante", "vintage_prep"],
-    "goorin-bros": ["vintage_prep", "streetwear"],
+    "dr-martens": ["streetwear", "casual"],
+    "colmar-originals": ["sportivo", "elegante"],
+    "blauer": ["casual"],
+    "woolrich": ["casual", "elegante"],
+    "c-p-company": ["streetwear"],
+    "ralph-lauren": ["elegante", "casual"],
+    "goorin-bros": ["casual", "streetwear"],
     "gas": ["casual"],
     "diesel": ["streetwear", "casual"],
     "psycho-bunny": ["casual", "elegante"],
-    "weekend-offender": ["streetwear", "vintage_prep"],
-    "edwin": ["vintage_prep", "casual"],
-    "lacoste": ["vintage_prep", "elegante"],
+    "weekend-offender": ["streetwear", "casual"],
+    "edwin": ["casual"],
+    "lacoste": ["casual", "elegante"],
     "propaganda": ["streetwear"],
 }
  
@@ -744,10 +726,14 @@ def extract_metadata_from_soup(soup: BeautifulSoup, product_url: str) -> dict:
 # sono fatti verificabili, non aggettivi, e per giunta dicono cose che una foto
 # NON può vedere — che è esattamente ciò che al testo resta da fare ora che la
 # revisione visiva copre il registro stilistico di tutto il catalogo.
-PAROLE_TECNICHE_AFFIDABILI = {
-    "impermeabile", "membrana", "idrorepellente", "antivento",
-    "trekking", "camouflage", "mimetico",
-}
+# Ora vuoto, e il meccanismo resta: era la deroga che lasciava passare dalla
+# DESCRIZIONE (non solo dal titolo) le parole tecniche inequivocabili. Tutte
+# quelle che c'erano alimentavano tag che non esistono piu': impermeabile,
+# membrana, antivento, trekking -> outdoor_tecnico; camouflage, mimetico ->
+# military. Nessuno degli otto registri rimasti ha parole altrettanto sicure
+# nella prosa, quindi la deroga non ha piu' clienti (vedi
+# guida_classificazione.md).
+PAROLE_TECNICHE_AFFIDABILI = set()
 
 
 def compute_style_scores(metadata: dict) -> dict:

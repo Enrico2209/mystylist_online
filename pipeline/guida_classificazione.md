@@ -24,26 +24,79 @@ sneakers **resta una camicia**.
 Gli abbinamenti consigliati sono un indizio sul **registro d'uso** del capo —
 utile per la formalità, come spiegato sotto — mai una proprietà del capo.
 
-## `style_scores` — i registri stilistici
+## `style_scores` — cinque registri, e la somma fa 1
 
-Assegna 0.0–1.0 ai registri pertinenti fra:
+I registri sono cinque, e sono tutti quelli disponibili. Non inventarne altri:
 
-`elegante` · `casual` · `streetwear` · `sportivo` · `workwear` ·
-`outdoor_tecnico` · `vintage_prep` · `minimal` · `military` · `boho_fantasia`
+`sportivo` · `casual` · `elegante` · `streetwear` · `da_mare`
 
-Di norma **1–3 tag**. Ometti gli zeri.
+Non sono etichette da accendere o spegnere: sono una **ripartizione**. Ti chiedi
+*quanto* il capo appartiene a ciascun registro, e i numeri che assegni
+**sommano a 1**. Di norma bastano uno o due registri.
 
-**Non usare `casual` come residuo.** È l'errore sistematico da evitare: quasi
-ogni capo di questo catalogo *potrebbe* dirsi casual, e se lo assegni per
-default il punteggio smette di distinguere alcunché. Metti `casual` solo quando
-c'è una ragione positiva: capo semplice, da tutti i giorni, senza tratti che lo
-spingano altrove. Se il capo ha membrana impermeabile è `outdoor_tecnico`; se ha
-tasconi e tessuto robusto da lavoro è `workwear`; se ha vestibilità oversize e
-grafiche è `streetwear`. In quei casi `casual` o non c'è, o è secondario.
+### Come dosare
 
-La descrizione è la fonte migliore per questo: dice il progetto del capo
-("ispirazione workwear", "estetica militare", "linea pulita e minimale") con
-molta più precisione di quanto si veda in una foto su fondo bianco.
+Il criterio è l'intensità: più il capo è marcato in un registro, più peso ci
+mettesse — il resto va quasi sempre su `casual`, che è il fondo neutro.
+
+| capo | ripartizione |
+|---|---|
+| maglia da calcio, capo tecnico da gara | `sportivo` 0.9 · `casual` 0.1 |
+| tuta, felpa e pantalone sportivi | `sportivo` 0.5 · `casual` 0.5 |
+| scarpe da ginnastica, running | `sportivo` 0.7 · `casual` 0.3 |
+| giacca da completo, blazer sartoriale | `elegante` 0.9 · `casual` 0.1 |
+| camicia | `elegante` 0.5 · `casual` 0.5 |
+| t-shirt liscia, jeans, maglione semplice | `casual` 1.0 |
+| capo molto appariscente: loghi grandi, grafiche aggressive, tagli estremi | `streetwear` 0.9 · `casual` 0.1 |
+| capo con qualche accento street ma portabile | `streetwear` 0.5 · `casual` 0.5 |
+| costume, telo, ciabatte, Birkenstock, infradito | `da_mare` 1.0 |
+| canotta | `da_mare` 0.5 · `casual` 0.5 |
+| capo che sta bene anche al mare (camicia di lino, bermuda) | una quota di `da_mare` ci sta |
+
+### Che cosa significa ciascun registro
+
+**`casual`** — il registro di gran lunga più comune, e va benissimo così. La
+maggior parte del catalogo è abbigliamento di tutti i giorni: se un capo non ha
+niente che lo spinga altrove, è `casual` 1.0 e non c'è nulla di sbagliato.
+Serve anche da complemento: è quasi sempre lui a prendere la quota che avanza.
+
+**`sportivo`** — roba da sport vera: tute, scarpe da ginnastica, capi tecnici da
+gara, tessuti da performance. Non basta che il marchio sia sportivo: una polo
+Lacoste è `casual`, una maglia da calcio è `sportivo` 0.9.
+
+**`elegante`** — capi da vestire: giacche da completo, blazer, cappotti
+sartoriali, mocassini, camicie. La camicia sta a metà perché si porta in
+entrambi i modi.
+
+**`streetwear`** — le "trappate": loghi vistosi, grafiche grandi, vestibilità
+estreme, capi che si fanno notare. Dosa in base a **quanto è aggressivo** il
+capo: una felpa nera con un piccolo ricamo è `casual`, una con una stampa che
+copre tutto il fronte è `streetwear` 0.9.
+
+**`da_mare`** — costumi, teli, pareo, copricostumi, e le calzature da spiaggia:
+ciabatte, infradito, Birkenstock, sabot di gomma. Le canotte stanno a metà con
+`casual`.
+
+Il registro dice **dove il capo può essere portato**, non solo dove nasce.
+Quindi una quota di `da_mare` su un capo che al mare ci starebbe davvero — una
+camicia di lino, una canotta — è giusta, non è un errore: quel capo sta bene sia
+con un pantalone sia con un costume, ed è esattamente l'informazione che serve
+a chi compone gli outfit. Non forzarla dove non c'entra, ma non toglierla per
+prudenza.
+
+### Due cose da non fare
+
+**Non lasciarti guidare dal marchio.** Il marchio dice come è fatto il capo, non
+come si porta. K-Way, The North Face e Napapijri fanno capi tecnici nella
+costruzione e `casual` nell'uso: questo negozio non vende attrezzatura da
+montagna, e **ogni capo del campionario è pensato per essere indossato con gli
+altri capi del campionario**, i K-Way compresi. Un giubbotto K-Way è `casual`;
+un pile sherpa è `casual`; un piumino nero liscio è `casual`.
+
+**Non cercare registri che non ci sono.** Non esistono "tecnico outdoor",
+"militare", "workwear", "vintage" o "minimal". Un verde oliva, una tasca a
+soffietto, una stampa NASA o un mimetico non spostano il capo altrove: un capo
+mimetico molto marcato è `streetwear`, altrimenti è `casual`.
 
 ## `season` — decidila dal TESSUTO, non dal tono del testo
 
@@ -169,9 +222,36 @@ dettaglio secondario. **Decidi dalla foto.**
 Valori: `tinta_unita` · `righe` · `quadri` · `camouflage` · `stampato` ·
 `animalier`
 
-Precisazione che conta: un **logo piccolo sul petto non è una stampa**. Quel
-capo è `tinta_unita`. Usa `stampato` solo quando la grafica occupa una porzione
-visibile del capo.
+### Che cosa NON è una fantasia
+
+Sono i tre errori che contano, perché fanno scartare abbinamenti giusti:
+
+**Un logo non è una stampa.** Non importa quanto sia noto o riconoscibile: un
+logo sul petto, un ricamo, una scritta col nome del marchio, uno stemma su un
+cappellino lasciano il capo `tinta_unita`. Una felpa nera con il logo NASA sul
+petto è **tinta unita nera**, non una felpa stampata.
+
+**Il color-blocking non è una fantasia.** Pannelli di colori diversi cuciti
+insieme — tipico di sneakers da running, giacche sportive, felpe a blocchi —
+non sono un motivo: sono un capo di più colori. Una scarpa verde con inserti
+rosa e dorati è `tinta_unita`.
+
+**Una scritta o un numero non sono un motivo.** Un numero da football, una
+parola sul retro, una piccola grafica isolata: `tinta_unita`.
+
+### Quando usare `stampato`
+
+Solo quando un motivo grafico **copre una porzione ampia e visibile** del capo,
+al punto che la prima cosa che noti è il disegno e non il colore. Se dovessi
+descrivere il capo a voce e diresti "quella nera", è tinta unita; se diresti
+"quella con il disegno", è stampata.
+
+### Calzature e accessori
+
+Quasi sempre `tinta_unita`. L'eccezione è quando è il **materiale stesso** a
+portare il motivo: pelle leopardata o zebrata (`animalier`), tela mimetica
+(`camouflage`), tessuto a quadri (`quadri`). Il resto — inserti, suole colorate,
+loghi, profili a contrasto — resta tinta unita.
 
 ## Formato della risposta
 

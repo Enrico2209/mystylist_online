@@ -15,7 +15,10 @@
 set -euo pipefail
 
 BASE="$(cd "$(dirname "$0")" && pwd)"
-UI="$BASE/../nuvolari ui/mystylistprojectdating-main"
+DB="$(python3 -c 'from percorsi import DATI; print(DATI)')"
+# Due livelli sopra e non uno: il codice sta in nuvolari_generation_pipeline,
+# il repo della UI e' fratello di "nuvolari backend".
+UI="$BASE/../../nuvolari ui/mystylistprojectdating-main"
 MESSAGGIO="${1:-Aggiornamento immagini e dati}"
 
 cd "$BASE"
@@ -44,7 +47,8 @@ echo "── 6/6  copia dei sorgenti nel repo ───────────�
 # online. Solo sorgenti: niente dati, niente foto, niente .env (vedi
 # pipeline/LEGGIMI.md).
 mkdir -p "$UI/pipeline"
-cp *.py *.md requirements.txt brand_list.json aggiorna_online.sh "$UI/pipeline/"
+cp *.py *.md requirements.txt aggiorna_online.sh "$UI/pipeline/"
+cp "$DB/brand_list.json" "$UI/pipeline/"
 
 # rete di sicurezza: se una chiave finisse in un sorgente, qui si fermerebbe
 # prima del commit invece di finire su GitHub

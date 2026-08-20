@@ -20,7 +20,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 LOG = BASE / "outfit_images_log.jsonl"
 
 

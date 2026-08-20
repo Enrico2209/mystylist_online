@@ -26,7 +26,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 CATALOGO = BASE / "nuvolari_full_organizzato"
 FEATURES = BASE / "features.parquet"
 CLUSTERED = BASE / "features_clustered.parquet"

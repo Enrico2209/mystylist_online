@@ -22,7 +22,7 @@ from pathlib import Path
 
 import outfit_generation as og
 
-BASE = Path(__file__).resolve().parent
+from percorsi import DATI as BASE, CODICE, CATALOGO as _CATALOGO, IMMAGINI_SUPERATE, PROGETTI  # noqa: F401
 POOL = BASE / "outfits_pool.jsonl"
 IMMAGINI = BASE / "outfit_images"
 MINIATURE = BASE / "outfit_thumbs"
