@@ -151,6 +151,14 @@
     font-family: 'Poppins', sans-serif;
 }
 
+/* Il blocco di destra era un div normale, quindi il pulsante "Revisionati"
+   si incollava a sinistra della colonna invece che al margine della pagina. */
+.header-dashboard-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
 .shortcut-text {
     font-size: 14px;
     margin-top: 4px;
@@ -896,4 +904,300 @@
     }
 
     .modale-nota { text-align: center; }
+}
+/* --- colonna dei capi (destra della dashboard) --------------------------- */
+
+.capi-text {
+    margin-bottom: 10px;
+    color: black;
+    opacity: 40%;
+    font-size: 14px;
+    font-family: 'Poppins', sans-serif;
+}
+
+/* La foto del capo e' l'informazione, non la decorazione: prende la larghezza
+   della colonna e il testo le sta a fianco. */
+.capo-grande {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 14px;
+    padding: 10px;
+    border: 1.3px solid #E5E5E5;
+    border-radius: 12px;
+    background-color: white;
+    text-decoration: none;
+    color: black;
+}
+
+.capo-grande:hover {
+    border-color: #6EB0FF;
+    transition: 0.2s ease-in-out;
+}
+
+.capo-grande-img {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 96px;
+    height: 124px;
+    flex-shrink: 0;
+    border-radius: 9px;
+    background-color: #FCFCFB;
+    overflow: hidden;
+}
+
+.capo-grande-img img {
+    width: 100%;
+    height: 100%;
+    /* contain e non cover: le foto di prodotto sono gia' scontornate, e
+       ritagliarle taglia via proprio la scarpa o la stampa da guardare. */
+    object-fit: contain;
+}
+
+.capo-grande-img .iconawardrobe {
+    width: 34px;
+    height: 34px;
+    color: #E5E5E5;
+}
+
+.capo-grande-testo {
+    min-width: 0;
+    font-family: 'Poppins', sans-serif;
+}
+
+.capo-grande-brand {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.capo-grande-titolo {
+    font-size: 11px;
+    color: #646464;
+    line-height: 1.35;
+    margin: 3px 0 5px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.capi-vuoto {
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    color: #A5A5A5;
+    padding: 16px 4px;
+}
+
+/* --- pulsante verso un'altra pagina (intestazione) ----------------------- */
+
+.bottone-pagina {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 12px;
+    border: 1.3px solid #E5E5E5;
+    border-radius: 9px;
+    background-color: white;
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    width: fit-content;
+    align-self: flex-end;
+}
+
+.bottone-pagina:hover {
+    border-color: #6EB0FF;
+    transition: 0.2s ease-in-out;
+}
+
+.bottone-numero {
+    padding: 1px 7px;
+    border-radius: 20px;
+    background-color: #F1F1F1;
+    font-size: 11px;
+    color: #646464;
+}
+
+/* --- pagina dei revisionati --------------------------------------------- */
+
+.filtri-revisionati {
+    display: flex;
+    gap: 9px;
+    margin-bottom: 16px;
+    flex-shrink: 0;
+}
+
+.filtro {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 14px;
+    border: 1.3px solid #E5E5E5;
+    border-radius: 20px;
+    background-color: white;
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.filtro:hover { border-color: #6EB0FF; transition: 0.2s ease-in-out; }
+
+.filtro-scelto {
+    border-color: black;
+    background-color: black;
+    color: white;
+}
+
+.filtro-numero {
+    padding: 1px 7px;
+    border-radius: 20px;
+    background-color: #F1F1F1;
+    font-size: 11px;
+    color: #646464;
+}
+
+/* auto-fill e non auto-fit: con pochi outfit le carte restano della loro
+   misura invece di allargarsi a tutta la riga. */
+.griglia-revisionati {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+    gap: 18px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    align-content: start;
+    padding-bottom: 20px;
+}
+
+.carta-revisionato {
+    padding: 12px;
+    border: 1.3px solid #E5E5E5;
+    border-radius: 12px;
+    background-color: white;
+    cursor: pointer;
+}
+
+.carta-revisionato:hover {
+    border-color: #6EB0FF;
+    transition: 0.2s ease-in-out;
+}
+
+.carta-img {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 235px;
+    border-radius: 9px;
+    background-color: #FCFCFB;
+    overflow: hidden;
+}
+
+.carta-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.carta-img .iconawardrobe { width: 44px; height: 44px; color: #E5E5E5; }
+
+.carta-esito {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+}
+
+.carta-nome {
+    margin-top: 10px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.carta-meta {
+    margin-top: 4px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 11px;
+    color: #A5A5A5;
+}
+
+.griglia-vuota {
+    grid-column: 1 / -1;
+    padding: 40px 0;
+    text-align: center;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    color: #A5A5A5;
+}
+
+/* --- ingrandimento di un revisionato ------------------------------------ */
+
+.modale-ingrandita { max-width: 620px; }
+
+.ingrandita-foto {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    /* vh e non un'altezza fissa: la foto e' verticale, e su un portatile una
+       misura fissa spingeva i bottoni sotto il bordo dello schermo. */
+    max-height: 52vh;
+    margin: 14px 0;
+    border-radius: 12px;
+    background-color: #FCFCFB;
+    overflow: hidden;
+}
+
+.ingrandita-foto img {
+    max-width: 100%;
+    max-height: 52vh;
+    object-fit: contain;
+}
+
+.ingrandita-foto .iconawardrobe { width: 60px; height: 60px; color: #E5E5E5; }
+
+.bottone-rimetti {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 22px;
+    height: 43px;
+    border-radius: 9px;
+    border: 1.3px solid black;
+    background-color: black;
+    color: white;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.bottone-rimetti:hover { opacity: 0.85; transition: 0.2s ease-in-out; }
+
+@media (max-width: 900px) {
+    .griglia-revisionati { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .carta-img { height: 165px; }
+    .capo-grande-img { width: 72px; height: 94px; }
+}
+
+/* Il nome di un outfit e' l'elenco dei suoi capi e arriva a 200 caratteri:
+   per intero mangiava meta' della modale e spingeva la foto fuori campo. */
+.modale-ingrandita .modale-titolo {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.35;
 }

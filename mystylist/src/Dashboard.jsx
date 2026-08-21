@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { IconHanger2, IconX, IconCheck, IconExternalLink, IconLogout, IconArrowBackUp } from '@tabler/icons-react';
+import { IconHanger2, IconX, IconCheck, IconExternalLink, IconLogout, IconChecklist } from '@tabler/icons-react';
 import { posta, prendi, leggiToken, leggiUtente, chiudiSessione, SessioneScaduta } from "./api.js";
 import ModaleRifiuto from "./ModaleRifiuto.jsx";
 
@@ -9,10 +9,24 @@ const prezzo = (valore, completo) =>
     (completo ? "" : "da ") + valore.toLocaleString("it-IT",
         {style: "currency", currency: "EUR", maximumFractionDigits: 0});
 
+// I capi arrivano nell'ordine con cui la pipeline compone l'outfit — prima i
+// tre obbligatori, poi i due opzionali — che incolonnato mette il capospalla
+// sotto le scarpe. In verticale si leggono dall'alto in basso, come si
+// descrive un outfit; lo slot mancante semplicemente non c'e'.
+//
+// L'accessorio va in fondo e non in cima con i cappelli: e' l'unico slot che
+// non ha un posto fisso sul corpo — borse, sciarpe, cinture — e con una tote
+// bag in prima riga la colonna sembrava iniziare dal dettaglio.
+const ORDINE_VISTA = ["outerwear", "top", "bottom", "shoes", "accessory"];
+const postoDi = (slot) => {
+    const i = ORDINE_VISTA.indexOf(slot);
+    return i === -1 ? ORDINE_VISTA.length : i;   // uno slot nuovo va in fondo, non in cima
+};
+const capiInOrdine = (capi) => [...capi].sort((a, b) => postoDi(a.slot) - postoDi(b.slot));
+
 function Dashboard(){
 
     const [revisionare, setRevisionare]= useState([]);
-    const [giudicati, setGiudicati]= useState([]);
     const [statistiche, setStatistiche]= useState({totali:0, approvati:0, rifiutati:0, da_revisionare:0});
     const [errore, setErrore]= useState("");
     const [inCorso, setInCorso]= useState(false);
@@ -42,13 +56,13 @@ function Dashboard(){
     const carica= useCallback(async()=>{
         try{
             // Niente iduser nel corpo: il server lo ricava dal token.
-            const [coda, fatti, stat] = await Promise.all([
+            // /api/giudicato non si chiama piu' qui: i revisionati hanno una
+            // pagina loro, e il loro numero e' gia' dentro le statistiche.
+            const [coda, stat] = await Promise.all([
                 posta("/api/revisionare", {}),
-                posta("/api/giudicato", {}),
                 posta("/api/statistiche", {}),
             ]);
             setRevisionare(coda);
-            setGiudicati(fatti);
             setStatistiche(stat);
             setErrore("");
             // Tiene la selezione se l'outfit è ancora in coda, altrimenti
@@ -74,10 +88,10 @@ function Dashboard(){
         return ()=>{ annullato = true; };
     },[selezionato]);
 
-    // Anche un outfit già giudicato si può riaprire: il verdetto si corregge,
-    // /api/giudica aggiorna la riga invece di aggiungerne una seconda.
-    const giudicato = giudicati.find((o)=>o.codice===selezionato) || null;
-    const corrente = revisionare.find((o)=>o.codice===selezionato) || giudicato || null;
+    // Qui compare solo cio' che e' ancora da giudicare: /api/revisionare
+    // esclude gia' i giudicati, e per correggere un verdetto si passa dalla
+    // pagina Revisionati.
+    const corrente = revisionare.find((o)=>o.codice===selezionato) || null;
 
     const giudica= useCallback(async(responso, commento, motivi)=>{
         if(!corrente || inCorso) return;
@@ -93,21 +107,6 @@ function Dashboard(){
             setInCorso(false);
         }
     },[corrente, inCorso, carica, gestisciErrore]);
-
-    // Rimette un outfit revisionato nella coda generale: il verdetto si
-    // toglie del tutto, insieme al motivo che lo accompagnava.
-    const rimetti= useCallback(async()=>{
-        if(!giudicato || inCorso) return;
-        setInCorso(true);
-        try{
-            await posta("/api/annulla", {id_match: giudicato.id});
-            await carica();
-        }catch(e){
-            gestisciErrore(e);
-        }finally{
-            setInCorso(false);
-        }
-    },[giudicato, inCorso, carica, gestisciErrore]);
 
     // Le scorciatoie promesse dall'intestazione.
     useEffect(()=>{
@@ -150,7 +149,8 @@ function Dashboard(){
                 <div className="match-dettagli">
                     {o.stile} · {o.genere} · {o.numero_capi} capi · {prezzo(o.prezzo_totale, o.prezzo_completo)}
                 </div>
-                {/* Solo sui revisionati: in coda questi campi non esistono. */}
+                {/* La scheda serve anche alla pagina dei revisionati, dove
+                    questi due campi ci sono; in coda no. */}
                 {o.motivi && o.motivi.length > 0 &&
                     <div className="match-motivi">
                         {o.motivi.map((m)=><span key={m} className="motivo-tag">{m}</span>)}
@@ -181,6 +181,10 @@ function Dashboard(){
                             </span>
                         </div>
                         <div className="shortcut-text">Shortcut <kbd>A</kbd> Approva <kbd>R</kbd> Rifiuta</div>
+                        <div className="bottone-pagina" onClick={()=>navigate("/revisionati")}>
+                            <IconChecklist size={14} stroke={2} /> Revisionati
+                            <span className="bottone-numero">{statistiche.approvati + statistiche.rifiutati}</span>
+                        </div>
                     </div>
 
                 </div>
@@ -204,25 +208,6 @@ function Dashboard(){
                                     : <IconHanger2 style={{color: "#E5E5E5", width:"70px", height: "70px"}} className="iconawardrobe" stroke={2} />}
                             </div>
 
-                            {/* I capi che compongono l'outfit: è ciò su cui lo
-                                stilista giudica, non solo la foto generata. */}
-                            {dettaglio && corrente &&
-                                <div className="striscia-capi">
-                                    {dettaglio.capi.map((c)=>(
-                                        <a key={c.id} className="capo" href={c.url_prodotto} target="_blank" rel="noreferrer">
-                                            {c.immagine && <img src={c.immagine} alt="" loading="lazy" />}
-                                            <div className="capo-testo">
-                                                <div className="capo-slot">{c.slot_etichetta}</div>
-                                                <div className="capo-brand">{c.brand || "—"}</div>
-                                                <div className="capo-prezzo">
-                                                    {c.prezzo == null ? "n.d." : prezzo(c.prezzo, true)}
-                                                    <IconExternalLink size={13} stroke={2} />
-                                                </div>
-                                            </div>
-                                        </a>
-                                    ))}
-                                </div>}
-
                             <div className="img-under">
                                 <div className="nome-match-img-container">
                                     {corrente ? corrente.nome : "Nessun match da revisionare"}
@@ -234,16 +219,6 @@ function Dashboard(){
                                         <span>{prezzo(corrente.prezzo_totale, corrente.prezzo_completo)}</span>
                                         <span>compatibilità {Math.round(corrente.compatibilita*100)}%</span>
                                     </div>}
-                                {giudicato &&
-                                    <div className="riga-revisionato">
-                                        <span className={giudicato.responso==="si" ? "esito-si" : "esito-no"}>
-                                            {giudicato.responso==="si" ? "Approvato" : "Rifiutato"}
-                                        </span>
-                                        {giudicato.commento && <span className="esito-commento">“{giudicato.commento}”</span>}
-                                        <span className={`rimetti ${inCorso ? "disabilitato" : ""}`} onClick={rimetti}>
-                                            <IconArrowBackUp size={14} stroke={2} /> Rimetti in revisione
-                                        </span>
-                                    </div>}
                                 <div className="container-bottoni-tinder">
                                     <div className="rifiuta" onClick={()=>corrente && setModaleAperta(true)}><IconX stroke={2} />Rifiuta</div>
                                     <div className="approva" onClick={()=>giudica("si")}><IconCheck stroke={2} />Approva</div>
@@ -252,15 +227,37 @@ function Dashboard(){
                         </div>
                     </div>
 
-                    {/*Sezione di destra*/}
+                    {/*Sezione di destra: i capi dell'outfit aperto.
+
+                       Stavano in una striscia orizzontale sotto la foto, con
+                       le anteprime a 40x52 px: a quella misura non si distingue
+                       una riga da un quadro, ed e' meta' di cio' su cui lo
+                       stilista giudica. In colonna la foto del capo prende
+                       tutta la larghezza. */}
                     <div className="column-3">
-                        <div className="giudicati-text">{giudicati.length} Revisionati</div>
-                        {giudicati.map((o)=>scheda(o, o.id,
-                            <div className="esito" style={{
-                                color: o.responso==="si" ? "#0B690A" : "#8E2727",
-                                backgroundColor: o.responso==="si" ? "#73CB6D" : "#F09595"}}>
-                                {o.responso==="si" ? <IconCheck stroke={2} /> : <IconX stroke={2} />}
-                            </div>))}
+                        <div className="capi-text">
+                            {dettaglio && corrente ? `${dettaglio.capi.length} capi dell'outfit` : "Capi"}
+                        </div>
+                        {dettaglio && corrente
+                            ? capiInOrdine(dettaglio.capi).map((c)=>(
+                                <a key={c.id} className="capo-grande" href={c.url_prodotto}
+                                   target="_blank" rel="noreferrer">
+                                    <div className="capo-grande-img">
+                                        {c.immagine
+                                            ? <img src={c.immagine} alt="" loading="lazy" decoding="async" />
+                                            : <IconHanger2 className="iconawardrobe" stroke={2} />}
+                                    </div>
+                                    <div className="capo-grande-testo">
+                                        <div className="capo-slot">{c.slot_etichetta}</div>
+                                        <div className="capo-grande-brand">{c.brand || "—"}</div>
+                                        <div className="capo-grande-titolo">{c.titolo}</div>
+                                        <div className="capo-prezzo">
+                                            {c.prezzo == null ? "n.d." : prezzo(c.prezzo, true)}
+                                            <IconExternalLink size={13} stroke={2} />
+                                        </div>
+                                    </div>
+                                </a>))
+                            : <div className="capi-vuoto">Apri un outfit per vederne i capi.</div>}
                     </div>
 
                 </div>

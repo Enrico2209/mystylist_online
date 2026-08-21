@@ -13,6 +13,10 @@ dist/
 .env*
 *.env.*
 
+# I backup che si lasciano prima di una modifica non sono codice del progetto:
+# finivano nel commit e da li' nel deploy.
+*.bak
+
 # I file di lavoro della pipeline non appartengono al repo della UI
 *.parquet
 *.jsonl
