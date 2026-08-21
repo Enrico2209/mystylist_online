@@ -80,6 +80,67 @@ UNDERTONE_DELTA_MIN = 4.0     # distanza cromatica sotto cui il sottotono non si
 UNDERTONE_DELTA_PIENO = 12.0  # ...e sopra cui si vede senza dubbi
 STONO_SCURI = 0.30            # il verdetto pieno, quando entrambe le condizioni sono al massimo
 
+# Il nero non e' neutro con il blu.
+#
+# Il bonus "neutro" qui sotto dice che un colore desaturato sta bene con tutto,
+# e per grigi, bianchi e beige e' vero. Con il blu no: il nero e' l'unico
+# neutro che il blu tira dentro la propria famiglia, perche' un blu abbastanza
+# scuro E' quasi nero. L'occhio prova ad accoppiarli, non ci riesce, e legge la
+# differenza come un errore invece che come un contrasto voluto.
+#
+# stono_da_sottotono copre solo la punta del problema — nero e blu notte alla
+# stessa profondita' — e lascia fuori il caso piu' comune, il nero addosso al
+# denim: fra una t-shirt nera (L 5,9) e un giubbotto denim (L 35,2) ci sono 29
+# punti di luminosita', sopra DARK_L_DELTA, quindi quella regola non scatta e
+# la coppia prendeva 0,90 pieno.
+#
+# Soglie misurate sui 2901 capi: 1125 hanno per dominante un neutro scuro
+# (mediana L 12) e 385 un blu con croma >= 6 nella banda hue 200-330 — p5 247,
+# mediana 279, p95 309, croma mediana 14,4 — di cui 213 scuri e 172 chiari.
+NERO_L_PIENO = 15.0        # sotto: neutro nero senza dubbi
+NERO_L_MAX = 35.0          # sopra: e' un grigio scuro, e con il blu ci sta
+BLU_HUE_CENTRO = 280.0     # centro della banda blu misurata
+BLU_HUE_PIENO = 25.0       # entro questo scarto dal centro e' blu pieno
+BLU_HUE_MAX = 45.0         # oltre non e' piu' blu
+BLU_CROMA_MIN = 6.0        # sotto: un grigio con un'ombra di blu, non un blu
+BLU_CROMA_PIENO = 14.0     # la croma mediana dei blu del catalogo
+# Non 0,30: quello e' il verdetto riservato al nero con il blu notte. Questo e'
+# il valore della "zona intermedia" di hue_score — nessuna regola della teoria
+# del colore sostiene l'abbinamento — che e' esattamente cio' che resta quando
+# al nero si toglie il bonus neutro che non gli spetta.
+ARMONIA_NERO_BLU = 0.45
+
+
+def _quanto_nero(L: float, croma: float) -> float:
+    """Quanto un colore e' nero (non un grigio scuro), da 0 a 1."""
+    if croma >= NEUTRAL_CHROMA or L >= NERO_L_MAX:
+        return 0.0
+    if L <= NERO_L_PIENO:
+        return 1.0
+    return (NERO_L_MAX - L) / (NERO_L_MAX - NERO_L_PIENO)
+
+
+def _quanto_blu(a: float, b: float) -> float:
+    """Quanto un colore e' blu, da 0 a 1. La luminosita' non conta: il blu
+    chiaro del denim lavato e il blu notte fanno lo stesso effetto contro il
+    nero, ed e' il caso che si voleva coprire."""
+    croma = math.hypot(a, b)
+    if croma < BLU_CROMA_MIN:
+        return 0.0
+    scarto = hue_circular_distance(math.degrees(math.atan2(b, a)) % 360, BLU_HUE_CENTRO)
+    if scarto >= BLU_HUE_MAX:
+        return 0.0
+    dentro = 1.0 if scarto <= BLU_HUE_PIENO else (BLU_HUE_MAX - scarto) / (BLU_HUE_MAX - BLU_HUE_PIENO)
+    saturo = min(1.0, (croma - BLU_CROMA_MIN) / (BLU_CROMA_PIENO - BLU_CROMA_MIN))
+    return dentro * saturo
+
+
+def stono_nero_su_blu(La, aa, ba, Lb, ab, bb) -> float:
+    """Quanto la coppia e' "nero addosso al blu", da 0 a 1. Simmetrica: non
+    importa quale dei due sia il nero."""
+    return max(_quanto_nero(La, math.hypot(aa, ba)) * _quanto_blu(ab, bb),
+               _quanto_nero(Lb, math.hypot(ab, bb)) * _quanto_blu(aa, ba))
+
 
 def hue_circular_distance(h1: float, h2: float) -> float:
     d = abs(h1 - h2) % 360
@@ -165,7 +226,15 @@ def color_harmony_pair(lab_a, lab_b) -> float:
     # fra due colori saturi è già penalizzato sopra a 0,25; senza questa
     # eccezione il bonus neutro lo premiava invece a 0,90.
     stono = stono_da_sottotono(La, Lb, aa, ba, ab_, bb)
-    return (1 - stono) * bonus_neutro + stono * STONO_SCURI
+    punteggio = (1 - stono) * bonus_neutro + stono * STONO_SCURI
+
+    # Il nero contro il blu: il bonus neutro qui sopra non gli spetta (vedi
+    # ARMONIA_NERO_BLU). Il min impedisce alla regola di ALZARE un punteggio
+    # gia' basso: e' una penalita', non una taratura verso 0,45.
+    nero_blu = stono_nero_su_blu(La, aa, ba, Lb, ab_, bb)
+    if nero_blu:
+        punteggio = min(punteggio, (1 - nero_blu) * punteggio + nero_blu * ARMONIA_NERO_BLU)
+    return punteggio
 
 
 # Sotto questo valore, color_harmony_pair sta segnalando uno stono vero e
