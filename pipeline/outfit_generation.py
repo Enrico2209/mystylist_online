@@ -63,6 +63,7 @@ import collections
 import itertools
 import json
 import os
+import random
 import re
 from pathlib import Path
 
@@ -956,6 +957,44 @@ def _build_outfit_label(gender, slots: dict) -> str:
     return f"Outfit {gender_label}: " + " + ".join(parts)
 
 
+def compatibilita_media(df: pd.DataFrame, relpaths, campione: int = 200,
+                        w_colore: float = 0.5, w_stile: float = 0.5,
+                        seme: int = 12345) -> dict:
+    """Quanto ogni capo va d'accordo col resto del campionario, in media.
+
+    Serve a decidere da quali capi PARTIRE. L'ordine delle ancore non e' un
+    dettaglio: chi arriva prima trova lo spazio libero e piazza la sua
+    composizione migliore, chi arriva dopo trova l'indice di novita' gia'
+    pieno e viene scartato. Finora l'ordine era alfabetico per relpath --
+    deterministico ma arbitrario, cioe' il posto in cima al pool lo decideva
+    il nome della cartella.
+
+    La misura e' su un campione casuale con seme fisso e non su tutto il
+    catalogo: 2322 ancore per 2901 capi sarebbero quasi sette milioni di
+    confronti per un dato che serve solo a mettere in fila. Con 200 estrazioni
+    l'errore sulla media e' di qualche millesimo, molto meno delle distanze
+    che separano un capo versatile da uno difficile.
+    """
+    rng = random.Random(seme)
+    altri = df[df["slot"].isin(MANDATORY_SLOTS + OPTIONAL_SLOTS)]
+    altri = altri[~altri["needs_vision_review"].astype(bool)]
+    righe = [altri.iloc[i] for i in range(len(altri))]
+    fuori = {}
+    for rel in relpaths:
+        r = df.loc[rel] if rel in df.index else None
+        if r is None:
+            fuori[rel] = 0.0
+            continue
+        punteggi = []
+        for _ in range(campione):
+            b = righe[rng.randrange(len(righe))]
+            if b["relpath"] == rel:
+                continue
+            punteggi.append(score_pair(r, b, w_colore, w_stile)["score"])
+        fuori[rel] = sum(punteggi) / len(punteggi) if punteggi else 0.0
+    return fuori
+
+
 def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.46,
                          w_colore: float = 0.5, w_stile: float = 0.5,
                          beam_width: int = 15, candidates_per_step: int = 30,
@@ -1038,9 +1077,21 @@ def run_outfit_pipeline(df: pd.DataFrame, out_jsonl: str, min_score: float = 0.4
         menu = []
         for anchor_slot in MANDATORY_SLOTS:
             anchor_pool = df[(df["slot"] == anchor_slot) & (~df["needs_vision_review"].astype(bool))]
-            anchor_pool = anchor_pool.sort_values("relpath")
+            # Dai capi piu' compatibili in giu': partire da un capo che va
+            # d'accordo con tutto significa che la prima passata riempie il
+            # pool con le composizioni piu' solide, e i capi difficili trovano
+            # comunque posto piu' avanti. Il relpath resta come spareggio, cosi'
+            # l'ordine e' riproducibile.
+            medie = compatibilita_media(df.set_index("relpath", drop=False),
+                                        list(anchor_pool["relpath"]),
+                                        w_colore=w_colore, w_stile=w_stile)
+            anchor_pool = anchor_pool.assign(_compat=anchor_pool["relpath"].map(medie))
+            anchor_pool = anchor_pool.sort_values(["_compat", "relpath"],
+                                                  ascending=[False, True])
             n = len(anchor_pool)
-            print(f"[*] Slot ancora '{anchor_slot}': {n} candidati...", flush=True)
+            print(f"[*] Slot ancora '{anchor_slot}': {n} candidati "
+                  f"(compatibilita' media da {anchor_pool['_compat'].iloc[0]:.3f} "
+                  f"a {anchor_pool['_compat'].iloc[-1]:.3f})...", flush=True)
 
             for i, (_, anchor) in enumerate(anchor_pool.iterrows(), 1):
                 total_anchors_tried += 1

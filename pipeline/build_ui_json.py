@@ -39,6 +39,20 @@ SLOT_IT = {"top": "Capo superiore", "bottom": "Pantaloni", "shoes": "Scarpe",
            "outerwear": "Capospalla", "accessory": "Accessorio"}
 
 
+
+# Elenco opzionale di codici outfit da mostrare per primi in revisione, uno per
+# riga (le righe vuote e quelle che iniziano con # sono ignorate). Assente =
+# nessuna priorita', si torna al puro ordine per compatibilita'.
+IDS_IN_TESTA = Path(__file__).with_name("ids_in_testa.txt")
+
+
+def _codici_in_testa() -> set:
+    if not IDS_IN_TESTA.exists():
+        return set()
+    righe = IDS_IN_TESTA.read_text(encoding="utf-8").splitlines()
+    return {r.strip() for r in righe if r.strip() and not r.startswith("#")}
+
+
 def fascia_formalita(f: float) -> str:
     """Etichetta leggibile: una UI filtra per 'casual', non per 2.15."""
     if f <= 1.8:
@@ -130,7 +144,21 @@ def main():
             "capi": capi,
         })
 
-    voci.sort(key=lambda v: -v["compatibilita"])
+    # L'ordine del JSON e' l'ordine della coda di revisione: il server
+    # (conOutfit in server.js) rispedisce le righe del database nell'ordine in
+    # cui compaiono qui. Ordinare per compatibilita' decrescente basta finche'
+    # gli outfit da rivedere per primi sono anche i migliori.
+    #
+    # Non basta piu' quando si genera un blocco di foto nuove da mandare in
+    # testa: i loro punteggi si incastrano fra quelli dei vecchi (i 100 del
+    # 21 agosto, 0,950-0,879, si sarebbero mescolati a 57 gia' in coda) e il
+    # blocco si perde. IDS_IN_TESTA, se esiste, elenca i codici da mettere
+    # davanti a tutto — fra loro restano ordinati per compatibilita'.
+    in_testa = _codici_in_testa()
+    voci.sort(key=lambda v: (0 if v["id"] in in_testa else 1, -v["compatibilita"]))
+    if in_testa:
+        trovati = sum(1 for v in voci if v["id"] in in_testa)
+        print(f"[*] {trovati}/{len(in_testa)} codici di {IDS_IN_TESTA.name} messi in testa")
 
     # Filtri già pronti: una UI non deve scorrere tutti gli outfit per sapere
     # quali valori esistono e quanti elementi ha ciascuno.
